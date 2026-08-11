@@ -1,12 +1,97 @@
-# eve Agent App
+# Health Agent — агент-инструкции
 
-This project uses the eve framework. Before writing code, read the relevant guide
-from the installed eve package docs. In most installs, those docs are at
-`node_modules/eve/docs/`. In workspaces or local package installs, resolve the
-installed `eve` package location first and read its `docs/` directory. If
-package docs are unavailable, use https://eve.dev/docs as a fallback.
+Персональный Telegram-бот для трекинга здоровья на фреймворке **eve** (долгоживущий процесс
+на VPS, Node 24, TypeScript). Аудитория: автор + семья (по одному профилю на человека,
+без шерингa данных между ними).
 
-Before implementing an integration yourself, use
-`eve registry search <query>` or `eve registry list` to discover available
-integrations. Inspect one with `eve registry view <item>`, then install it with
-`eve add <item>`.
+> **Текущий статус проекта см. в [`docs/STATUS.md`](./docs/STATUS.md).** Перед началом любой
+> работы прочитай его — там зафиксировано, какие фазы завершены, что в работе и какие правки
+> вносились.
+
+## Стек (кратко)
+
+| Компонент | Выбор |
+|-----------|-------|
+| Фреймворк | `eve` ^0.31 |
+| Язык | TypeScript (Node 24) |
+| Канал | Telegram (`eve/channels/telegram`) + custom channel для phone-hub |
+| БД | Postgres 16 (локально на VPS, Docker) + `drizzle-orm` / `drizzle-kit` |
+| Питание | FatSecret (прямые подписанные fetch'и, OAuth 1.0a 3-legged + OAuth 2.0 client-credentials) |
+| Упражнения | wger REST API (без ключа) |
+| Графики | `chartjs-node-canvas` (локально) |
+| Деплой | VPS, systemd, Caddy (auto-TLS) |
+
+Полное обоснование и альтернативы — в [`docs/SPECIFICATION.md`](./docs/SPECIFICATION.md),
+§3 «Стек технологий».
+
+## Структура документации
+
+```
+docs/
+├── SPECIFICATION.md          # полная спецификация проекта (источник правды)
+├── STATUS.md                 # текущее состояние + журнал правок (обновлять после доработок)
+└── phases/
+    ├── PHASE-0.md            # скелет eve: Telegram, БД, schema, онбординг
+    ├── PHASE-1.md            # phone-hub ingestion + агрегаты
+    ├── PHASE-2.md            # FatSecret (OAuth) + food_entries + калории
+    ├── PHASE-3.md            # недельный отчёт + графики + tone-пресеты
+    ├── PHASE-4.md            # проактивные сообщения (dispatcher, алерты, workout)
+    ├── PHASE-5.md            # тренировочная программа (wger + адаптация)
+    ├── PHASE-6.md            # полировка: edge-cases, удаление данных, мониторинг
+    └── PHASE-7.md            # (опц.) мобильный мост для CMF by Nothing
+```
+
+## Как работать с проектом
+
+### Перед написанием кода
+
+1. **Прочитай релевантный гайд из eve**. В большинстве инсталляций —
+   `node_modules/eve/docs/`. В workspaces/local-инсталляциях сначала разреши путь к
+   установленному пакету `eve` и читай его `docs/`. Если пакетных доков нет —
+   фолбэк https://eve.dev/docs.
+2. **Перед имплементацией интеграции вручную** — проверь реестр:
+   `eve registry search <query>` или `eve registry list`, затем
+   `eve registry view <item>`, затем `eve add <item>`.
+3. **Сверься с фазовой спецификацией**: открой `docs/phases/PHASE-N.md` для своей задачи.
+   В фазе перечислены файлы, таблицы, DoD и риски — реализуй по этому списку.
+4. **Сверься с глобальной спецификацией**: `docs/SPECIFICATION.md` остаётся источником правды
+   по архитектуре, модели данных и edge-cases. Если фазовая спецификация расходится с
+   глобальной — флагни в STATUS.md и уточняй у автора.
+
+### Соглашения кода
+
+- `requireUser(ctx)` (из `agent/lib/tenant.ts`) — **обязательно** во всех БД-tools.
+  `user_id` берётся из сессии, никогда не передаётся моделью (§12.6, §8).
+- Timestamp'ы — в UTC; «день» — локальный день юзера по `users.timezone` (§12.1).
+- Сон относится к **дате пробуждения**.
+- Все FatSecret-операции — через собственные tools с прямыми подписанными fetch'ами
+  (`region=RU` принудительно), **не** через MCP-connection (§6.2).
+- Ошибки оборачиваются в user-friendly сообщения в tone-пресете юзера; стек-трейсы — только
+  в логи (§16).
+- Логи — структурные JSON в journald с полями `component`, `user_id`, `event`, `level` (§15).
+
+### После доработок — **обязательно** (это зафиксированное правило)
+
+> **Любая завершённая доработка (фаза, задача, исправление) должна быть отражена в
+> [`docs/STATUS.md`](./docs/STATUS.md).** Это касается:
+> - завершения фазы / задачи фазовой спецификации;
+> - изменения модели данных, миграций, env-переменных, структуры каталогов;
+> - исправления бага, edge-case'а, изменения поведения;
+> - добавления/удаления интеграции или зависимости;
+> - любого отклонения от `docs/SPECIFICATION.md` или фазовой спецификации.
+>
+> В STATUS.md ведётся два блока: «Текущее состояние по фазам» (что сделано/в работе) и
+> «Журнал правок» (append-only список с датой, компонентом, сутью изменения и ссылкой на
+> коммит). Не удаляй записи из журнала — новая правка дописывается сверху.
+>
+> Если правка меняет зафиксированную в SPECIFICATION.md архитектуру или модель данных —
+> сначала обнови SPECIFICATION.md (и соответствующий `PHASE-N.md`), затем сделай запись в
+> STATUS.md. Документация и код не должны расходиться.
+
+## Каналы запуска
+
+- `npm run dev` → `eve dev` (локальная разработка; schedules на cron-каденце НЕ ходят,
+  запускать через dev-dispatch route, §17).
+- `npm run build` → `eve build`.
+- `npm start` → `eve start` (продакшн на VPS под systemd).
+- `npm run typecheck` → `tsc`.
