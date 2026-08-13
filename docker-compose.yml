@@ -1,0 +1,33 @@
+# Локальный Postgres 16 для разработки.
+# `docker compose up -d postgres` → 127.0.0.1:5432, named volume pgdata.
+# Не выставлен наружу — только localhost (privacy, §13/§14).
+#
+# pgcrypto (для gen_random_uuid) создаётся первой drizzle-миграцией,
+# см. drizzle/0000_*.sql и agent/lib/db/schema.ts.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: health-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: health
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: health
+    ports:
+      # Дефолт — 5432 (§14). На некоторых Windows-машинах порт 5432 попадает в
+      # Hyper-V excluded range — тогда задай POSTGRES_PORT (напр. 15432) и используй
+      # соответствующий порт в DATABASE_URL.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/01-pgcrypto.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U health -d health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+    name: health-pgdata

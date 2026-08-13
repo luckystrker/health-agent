@@ -10,17 +10,24 @@
     "build": "eve build",
     "dev": "eve dev",
     "start": "eve start",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@vercel/connect": "0.4.3",
     "ai": "^7.0.38",
+    "drizzle-orm": "^0.45.2",
     "eve": "^0.31.3",
+    "postgres": "^3.4.9",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "24.x",
-    "typescript": "7.0.2"
+    "drizzle-kit": "^0.31.10",
+    "typescript": "7.0.2",
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "ai": "^7.0.38"
@@ -28,5 +35,4 @@
   "engines": {
     "node": "24.x"
   }
-
 }

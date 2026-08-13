@@ -4,7 +4,7 @@
 > Состав фазы — из §19. Перед стартом прочитай [`../../AGENTS.md`](../../AGENTS.md) и
 > актуальное состояние в [`../STATUS.md`](../STATUS.md).
 
-**Статус:** 🔲 не начата.
+**Статус:** ✅ завершена (2026-08-11). См. [`../STATUS.md`](../STATUS.md), журнал правок.
 
 ---
 
@@ -173,6 +173,12 @@ MODEL_API_KEY=
 ### 6.5 `onboarding-guard` (`agent/hooks/onboarding-guard.ts`)
 - На `turn.started`: если `users.onboarded_at IS NULL` и turn не в потоке онбординга —
   направить юзера в онбординг (как именно — по гайдам eve на `turn.started` hooks).
+
+> **Реализация (STATUS.md, 2026-08-11):** guard выполнен как **динамическая инструкция**
+> `agent/instructions/onboarding-guard.ts` (`defineDynamic`+`defineInstructions` на
+> `turn.started`), а **НЕ** `agent/hooks/*`-hook. Причина: hooks в eve observe-only и не
+> умеют инжектить промпт/блокировать turn. Аналогично реализованы `tone.ts` и
+> `user-context.ts`. Сути контракта не меняет. См. STATUS.md, журнал правок фазы 0.
 
 ### 6.6 Tone-пресеты (`agent/lib/tone-presets.ts`)
 - 4 пресета из §11.3: `supportive`, `sarcastic`, `strict`, `neutral`.

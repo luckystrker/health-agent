@@ -19,7 +19,7 @@
 
 | Фаза | Название | Статус | Спецификация | Замечания |
 |------|----------|--------|--------------|-----------|
-| **0** | Скелет eve: Telegram, БД, schema, онбординг | 🔲 не начата | [`PHASE-0.md`](./phases/PHASE-0.md) | Текущий репо — дефолтный Vercel-скелет (`agent/channels/eve.ts`, `defineAgent` с моделью claude-sonnet-5). Нужна замена на Telegram-канал + здоровье-специфичный агент. |
+| **0** | Скелет eve: Telegram, БД, schema, онбординг | ✅ завершена | [`PHASE-0.md`](./phases/PHASE-0.md) | Telegram-канал + allowlist, schema всех 13 таблиц + миграции (drizzle), онбординг (model-driven, 10 шагов), `requireUser`/`userAuthFor`, tone-пресеты, 5 settings-инструментов + complete-onboarding/get-my-status, unit-тесты (22 зелёных). **Модель:** `opencode-go/deepseek-v4-flash` (128k context, escape-hatch). Авто-верифицировано: typecheck, `eve build`, docker compose + `drizzle-kit migrate` (13 таблиц + pgcrypto), vitest. **Не авто-верифицировано** (нужны реальные креды/туннель): Telegram end-to-end онбординг — см. checklist в журнале. |
 | **1** | Phone-hub ingestion + агрегаты | 🔲 не начата | [`PHASE-1.md`](./phases/PHASE-1.md) | Зависит от фазы 0 (schema, users). |
 | **2** | FatSecret (OAuth) + food_entries + калории | 🔲 не начата | [`PHASE-2.md`](./phases/PHASE-2.md) | Зависит от фазы 0; OAuth 1.0a 3-legged PIN-flow. |
 | **3** | Недельный отчёт + графики + tone-пресеты | 🔲 не начата | [`PHASE-3.md`](./phases/PHASE-3.md) | Зависит от фаз 1–2 (нужны агрегаты + питание). |
@@ -73,6 +73,121 @@
 > - Спека: <ссылка на раздел SPECIFICATION.md или PHASE-N.md, если менялась>
 > - Коммит: <hash или "не коммичено">
 > ```
+
+### 2026-08-11 — фаза 0 — правки по ревью (7 замечаний: 3 высоких, 4 средних)
+
+- **Что:** По итогам код-ревью фазы 0 исправлены 7 замечаний (см. ниже). Авто-верификация
+  после правок: `tsc --noEmit` чисто; `vitest run` — 23 теста (добавлен тест невалидного
+  формата `localDayRangeUtc`); `drizzle-kit migrate` применяет миграцию `0001` поверх `0000`
+  на чистой БД (13 таблиц, `users` — 8 колонок с новой `timezone_set_at`).
+- **Высокие:**
+  1. **`.gitignore` ослаблял маску секретов.** Было `.env`/`.env.local`/`.env.*.local`
+     (пропускало `.env.production`, `.env.dev` и пр. в коммит). Стало `.env*` + `!.env.example`.
+  2. **Гонка в `ensureUserByChatId`** (параллельные первые webhook'и → unique violation).
+     Переписано на atomic `insert(...).onConflictDoNothing().returning()` + fallback select.
+  3. **`localDayRangeUtc` хрупкий контракт** — `day` через `getFullYear/Month/Date` (локальные
+     компоненты Date) съезжал на сутки на машинах с отрицательным offset. Контракт изменён:
+     принимает **строку `"YYYY-MM-DD"`** (из `localDay()`), не зависит от machine tz.
+     Неиспользуемый `localDayDate` удалён; тесты переведены на строковый аргумент.
+- **Средние:**
+  4. **`set-goal` валидация** — был refine только для `maintenance`. Добавлен `superRefine`:
+     для `weight_loss`/`muscle_gain` обязателен `target_weight_kg` и **ровно одно** из
+     `tempo_kg_per_week`/`target_date`; `target_date` не в прошлом; при `calorie_source='manual'`
+     требуется `manual_target_kcal`.
+  5. **`complete-onboarding` не проверял готовность** — модель могла завершить онбординг без
+     профиля/цели. Теперь проверяет наличие `profiles` и активной `goals`; иначе
+     `{ok:false, missing:[...]}`.
+  6. **`onboardingStepsDone.timezone` — скрытая копипаста** (`o.profile !== null`): шаг tz
+     считался пройденным без реального выбора пояса → guard мог пропустить шаг 3. Добавлена
+     колонка `users.timezone_set_at` (миграция `0001`): `set-tz` выставляет её; шаг 3 теперь
+     честно определяется по `timezone_set_at IS NOT NULL`.
+  7. **`set-reminders` не позволял отключить напоминание** — поля не принимали `null`. Теперь
+     семантика: `undefined` → не трогать; `null` → сбросить в NULL; значение → поставить
+     (для `morning/midday/evening_local` и `workout_times`).
+- **Затронутые файлы/артефакты:** `.gitignore`; `agent/lib/{tenant,time,user-status}.ts`;
+  `agent/lib/db/schema.ts` (+колонка); `drizzle/0001_add_users_timezone_set_at.sql` +
+  `drizzle/meta/*`; `agent/tools/{goals/set-goal,account/complete-onboarding,
+  settings/set-reminders,settings/set-tz}.ts`; `tests/time.test.ts`.
+- **Спека:** правки в рамках фазы 0 (контракты PHASE-0/SPECIFICATION не нарушены). Новая
+  колонка `users.timezone_set_at` — расширение модели данных §5.1; при обновлении
+  SPECIFICATION.md §5.1 её следует зафиксировать.
+- **Состояние проекта:** фаза 0 завершена + ревью-правки внесены.
+- **Коммит:** _см. ниже (коммитится вместе)._
+
+### 2026-08-11 — фаза 0 — завершена реализация скелета (Telegram, БД, schema, онбординг)
+
+- **Что:** Реализована фаза 0 целиком по `PHASE-0.md`. Vercel-скелет удалён;
+  поднят Telegram-канал с allowlist, schema всех 13 таблиц проекта + drizzle-миграции,
+  онбординг (model-driven, 10 шагов), `requireUser`/`userAuthFor`, tone-пресеты,
+  инструменты `update-profile`/`set-goal`/`set-tone`/`set-reminders`/`set-tz`/
+  `complete-onboarding`/`get-my-status`, unit-тесты.
+- **Авто-верификация (✅):** `tsc --noEmit` чисто; `eve build` проходит; `docker compose up
+  postgres` + `drizzle-kit migrate` создают все 13 таблиц + `pgcrypto` (21 индекс/констрейнт,
+  включая composite PK и partial unique); `vitest run` — 22 теста зелёных
+  (tenant principal-форматы, userAuthFor формат, tz-конверсия + DST spring forward/fall back
+  + sleep через полночь).
+- **Не авто-верифицировано (checklist для автора):** Telegram end-to-end требует реального
+  бота + публичного URL. Шаги: (1) `@BotFather` → токен; (2) `setWebhook` с
+  `secret_token` на туннель (`cloudflared`/ngrok) → `/eve/v1/telegram`; (3) прописать
+  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_SECRET_TOKEN`/`TELEGRAM_BOT_USERNAME`/
+  `ALLOWED_CHAT_IDS`/`MODEL_API_KEY` в `.env`; (4) `npm run dev`; (5) пройти онбординг
+  10 шагов от своего chat_id, проверить `onboarded_at` в БД; (6) чужой chat_id молчит;
+  (7) `set-tone` меняет стиль; (8) settings-инструменты пишут в БД.
+- **Затронутые файлы/артефакты (создано/изменено):**
+  - Конфиг: `package.json` (−`@vercel/connect`, +`drizzle-orm`/`postgres`/`drizzle-kit`/
+    `vitest`, scripts `db:*`/`test*`), `tsconfig.json` (paths `#*`, include `tests/`),
+    `.env.example` (+`TELEGRAM_BOT_USERNAME`), `.gitignore` (`.env.local`),
+    `docker-compose.yml` (Postgres 16 + `pgcrypto` + `POSTGRES_PORT`),
+    `drizzle.config.ts`, `vitest.config.ts`, удалён `.vercelignore`.
+  - БД: `agent/lib/db/schema.ts` (13 таблиц), `agent/lib/db/client.ts`,
+    `drizzle/0000_init.sql` (+ `CREATE EXTENSION pgcrypto`), `drizzle/meta/*`,
+    `docker/postgres-init.sql`.
+  - Либы: `agent/lib/{env,tenant,user-auth,tone-presets,time,user-status}.ts`.
+  - Канал: `agent/channels/telegram.ts`, удалён `agent/channels/eve.ts`.
+  - Инструкции: `agent/instructions.md`, `agent/instructions/{onboarding-guard,tone,
+    user-context}.ts`.
+  - Tools: `agent/tools/goals/{update-profile,set-goal}.ts`,
+    `agent/tools/settings/{set-tone,set-reminders,set-tz}.ts`,
+    `agent/tools/account/{complete-onboarding,get-my-status}.ts`.
+  - Агент: `agent/agent.ts`.
+  - Тесты: `tests/{tenant,user-auth,time}.test.ts`.
+- **Принятые решения и отклонения от спецификации (см. ниже «Спека»):**
+  1. **Модель — `opencode-go/deepseek-v4-flash`** (выбор автора, фиксирует дефолт из
+     §20). AI Gateway не отдаёт metadata контекстного окна → задан `modelContextWindowTokens:
+     128_000` (escape hatch). 🚧 **TODO:** подтвердить точное контекстное окно
+     deepseek-v4-flash и при необходимости поправить `agent.ts`.
+  2. **`onboarding-guard` / `tone` / `user-context` реализованы как динамические инструкции**
+     (`agent/instructions/*.ts`, `defineDynamic`+`defineInstructions`), **НЕ** как
+     `turn.started`-hook. Причина: hooks в eve observe-only и не умеют инжектить промпт
+     или блокировать turn (проверено по `node_modules/eve/dist` + `guides/hooks.md`).
+     Сути контракта не меняет. В `PHASE-0.md` §6.5 добавлен note.
+  3. **`goals` surrogate PK.** Спека §5.2 не declares PK — добавлен
+     `id bigint generated always as identity primary key` (+ `active` для текущей цели).
+  4. **`daily_aggregates.value.workouts.calories_kgl` → `calories_kcal`** (опечатка §5.3).
+     На уровне `schema.ts` `value` хранится как `jsonb` без жёсткой схемы — исправление
+     задокументировано и должно применяться в коде агрегации (фаза 1, `lib/aggregates.ts`).
+  5. **`TELEGRAM_BOT_USERNAME`** добавлен в `.env.example` (используется в PHASE-0 §6.1,
+     но отсутствовал в §14). Спеку §14 стоит пополнить.
+  6. **`requireUser` всегда ре-лукап `user_id` из БД по `chat_id`** (не доверяет
+     `attributes.user_id` синтезированного principal'а) — безопасность.
+  7. **`update-profile` при указании веса дописывает строку в `weight_log`**
+     (`current_weight_kg` = «последнее», `weight_log` = «история»). `onConflictDoNothing`
+     защищает от дубля по `(user_id, measured_at)`.
+  8. **`db/client.ts`** при отсутствии `DATABASE_URL` использует placeholder URL
+     (postgres-js lazy-pool), чтобы `eve build` мог оценивать tool-модули без env.
+     В runtime реальный `DATABASE_URL` обязан быть задан — иначе первый запрос упадёт с
+     connection error.
+  9. **`docker-compose.yml`: порт Postgres настраиваемый** через `${POSTGRES_PORT:-5432}`.
+     Причина: на части Windows-машин порт 5432 попадает в Hyper-V excluded port range и
+     недоступен для bind; override (напр. `POSTGRES_PORT=15432`) решает это локально.
+     Дефолт остаётся 5432 (§14).
+- **Спека:** Фаза реализована по `PHASE-0.md` и `SPECIFICATION.md` §4/§5/§7/§8/§9/§10/
+  §11.3/§12.1/§14/§17/§18.1. Отклонения: §5.2 (goals PK), §5.3 (опечатка calories_kgl),
+  §6.5 PHASE-0 (onboarding-guard через инструкции), §14 (env TELEGRAM_BOT_USERNAME,
+  POSTGRES_PORT; модель). SPECIFICATION.md и PHASE-N.md текстово не правились — решения
+  зафиксированы здесь; при расхождении STATUS.md приоритетнее для текущего состояния кода.
+- **Состояние проекта:** фаза 0 завершена и авто-верифицирована. Фазы 1–6 не начаты.
+- **Коммит:** _не коммичено._
 
 ### 2026-08-11 — docs — ревью PHASE-4 и PHASE-5: исправление 14 замечаний (4 критических)
 
