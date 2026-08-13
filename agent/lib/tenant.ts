@@ -72,6 +72,18 @@ export async function requireUser(ctx: AuthContext): Promise<{ userId: string; c
 }
 
 /**
+ * Часовой пояс юзера (для расчётов локального дня). Fallback Europe/Moscow
+ * (дефолт при создании user-row, §10 шаг 3). Используется db-tool'ами и schedule'ами.
+ */
+export async function getUserTimezone(userId: string): Promise<string> {
+  const row = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { timezone: true },
+  });
+  return row?.timezone ?? "Europe/Moscow";
+}
+
+/**
  * Создаёт user-row для chat_id, если её ещё нет (первый `/start` от allowlist-юзера).
  * Дефолтный tz — Europe/Moscow (§10 шаг 3; уточняется на онбординге).
  *

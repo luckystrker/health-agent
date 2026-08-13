@@ -133,7 +133,10 @@ export const rawSamples = pgTable(
     receivedAt: timestamp("received_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
-    index("raw_samples_user_metric_recorded_idx").on(t.userId, t.metric, t.recordedAt),
+    // Unique по (user_id, metric, recorded_at): один сэмпл на событие/бакет. Даёт
+    // корректный upsert (ON CONFLICT) и убирает двойной счёт при гонке ретраев
+    // forwarder'а (review фазы 1). recorded_at = время события/бакета (§5.3).
+    uniqueIndex("raw_samples_user_metric_recorded_idx").on(t.userId, t.metric, t.recordedAt),
     index("raw_samples_received_idx").on(t.receivedAt), // для очистки по TTL 30 дней
   ],
 );

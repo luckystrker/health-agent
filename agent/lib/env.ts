@@ -33,6 +33,9 @@ export const env = {
 
   // Phone-hub (фаза 1)
   phoneHubTokenSalt: process.env.PHONE_HUB_TOKEN_SALT,
+  // Публичная база webhook'а phone-hub (Caddy, auto-TLS). Из неё собирается URL
+  // для forwarder'а: `${PHONE_HUB_WEBHOOK_URL}/eve/v1/phone-hub` (§6.1, §14).
+  phoneHubWebhookUrl: process.env.PHONE_HUB_WEBHOOK_URL,
 
   // FatSecret (фаза 2)
   fatsecretClientId: process.env.FATSECRET_CLIENT_ID,

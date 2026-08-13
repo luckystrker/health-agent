@@ -8,7 +8,7 @@
 > (фаза, задача, багфикс, изменение модели/env/зависимостей, отклонение от спеки) — должна
 > быть отражена здесь. Журнал правок — append-only, новые записи сверху.
 
-Дата последнего обновления: **2026-08-11**.
+Дата последнего обновления: **2026-08-14**.
 
 ---
 
@@ -20,7 +20,7 @@
 | Фаза | Название | Статус | Спецификация | Замечания |
 |------|----------|--------|--------------|-----------|
 | **0** | Скелет eve: Telegram, БД, schema, онбординг | ✅ завершена | [`PHASE-0.md`](./phases/PHASE-0.md) | Telegram-канал + allowlist, schema всех 13 таблиц + миграции (drizzle), онбординг (model-driven, 10 шагов), `requireUser`/`userAuthFor`, tone-пресеты, 5 settings-инструментов + complete-onboarding/get-my-status, unit-тесты (22 зелёных). **Модель:** `opencode-go/deepseek-v4-flash` (128k context, escape-hatch). Авто-верифицировано: typecheck, `eve build`, docker compose + `drizzle-kit migrate` (13 таблиц + pgcrypto), vitest. **Не авто-верифицировано** (нужны реальные креды/туннель): Telegram end-to-end онбординг — см. checklist в журнале. |
-| **1** | Phone-hub ingestion + агрегаты | 🔲 не начата | [`PHASE-1.md`](./phases/PHASE-1.md) | Зависит от фазы 0 (schema, users). |
+| **1** | Phone-hub ingestion + агрегаты | ✅ завершена | [`PHASE-1.md`](./phases/PHASE-1.md) | Custom channel `phone-hub` (`POST /eve/v1/phone-hub`, Bearer-токен, нормализация, дедуп, запись в `raw_samples`); schedule `aggregate-raw` (raw→daily, cutoff-snapshot, §12.3); libs `phone-hub-token`/`normalize`/`dedup`/`aggregates`/`log`/`daily-read`; tools `get-sleep`/`get-activity`/`get-workouts`/`add-manual-data`/`rotate-phone-hub-token`; dev/mock-forwarder. **Миграция 0002**: unique-индекс `raw_samples (user_id, metric, recorded_at)` (фикс гонки/двойного счёта). Unit-тесты (+52, всего 74 зелёных). Авто-верифицировано: typecheck, `eve build`, manifest (phone-hub route + schedule `0 3 * * *` + 12 tools), vitest. **Не авто-верифицировано** (нужны docker-БД + туннель): webhook end-to-end + apply миграций 0000–0002 — checklist ниже. |
 | **2** | FatSecret (OAuth) + food_entries + калории | 🔲 не начата | [`PHASE-2.md`](./phases/PHASE-2.md) | Зависит от фазы 0; OAuth 1.0a 3-legged PIN-flow. |
 | **3** | Недельный отчёт + графики + tone-пресеты | 🔲 не начата | [`PHASE-3.md`](./phases/PHASE-3.md) | Зависит от фаз 1–2 (нужны агрегаты + питание). |
 | **4** | Проактивные сообщения (dispatcher, алерты, workout) | 🔲 не начата | [`PHASE-4.md`](./phases/PHASE-4.md) | Зависит от фаз 0–3. |
@@ -73,6 +73,102 @@
 > - Спека: <ссылка на раздел SPECIFICATION.md или PHASE-N.md, если менялась>
 > - Коммит: <hash или "не коммичено">
 > ```
+
+### 2026-08-14 — фаза 1 — правки по ревью (3 замечания, средние)
+
+- **Что:** По итогам код-ревью фазы 1 исправлены 3 замечания. Авто-верификация после
+  правок: `tsc --noEmit` чисто; `vitest run` — 74 теста; `eve build` проходит;
+  миграция 0002 (unique-индекс) сгенерирована и зарегистрирована в journal/snapshot.
+- **1. Гонка в `ingestSample` → двойной счёт.** Не было unique-ограничения на
+  `(user_id, metric, recorded_at)` → два параллельных POST'а одного события (ретрай
+  forwarder'а) оба проходили select→delete→insert → две строки → двойной счёт в
+  `aggregateSteps`/`aggregateActivity`. **Фикс:** миграция `0002_bumpy_bruce_banner.sql`
+  делает индекс `raw_samples_user_metric_recorded_idx` UNIQUE;
+  `agent/lib/db/schema.ts` — `uniqueIndex`. `ingestSample` переписан на один atomic
+  `INSERT ... ON CONFLICT (user_id, metric, recorded_at) DO UPDATE ... WHERE payload
+  IS DISTINCT FROM EXCLUDED.payload ... RETURNING xmax`: unique-индекс исключает дубль
+  при гонке, WHERE пропускает байт-в-байт ретраи (RETURNING пуст → `retry-dup`),
+  `xmax` отличает new от upsert. Убраны select→delete→insert + явная транзакция.
+- **2. Manual vs device для bucket-метрик.** §12.2 «manual имеет приоритет при
+  отсутствии автоматических» расходился с кодом (для steps/HR/calories manual и device
+  суммировались). **Решение:** задокументировано поведение — unique-индекс (из п.1)
+  даёт один сэмпл на бакет → manual и device НЕ суммируются (last-write-wins;
+  обычно синхронизация устройства приходит позже и перезаписывает placeholder).
+  Обновлены `agent/tools/db/add-manual-data.ts` (description) и SPECIFICATION §12.2.
+- **3. `get-activity` source-индикатор.** Брался только от steps → при наличии
+  HR/калорий, но отсутствии шагов возвращал `source='none'`. **Фикс:** добавлен
+  `combinedSource()` в `agent/lib/daily-read.ts` (aggregate > raw > none по трём
+  метрикам); `agent/tools/db/get-activity.ts` использует его.
+- **Затронутые файлы:** `agent/lib/db/schema.ts`, `agent/lib/dedup.ts`,
+  `agent/channels/phone-hub.ts`, `agent/lib/daily-read.ts`,
+  `agent/tools/db/{get-activity,add-manual-data}.ts`, `drizzle/0002_bumpy_bruce_banner.sql`
+  + `drizzle/meta/*`; `docs/SPECIFICATION.md` (§12.2).
+- **Спека:** §12.2 (поведение manual vs device уточнено). Модель: raw_samples индекс →
+  unique (миграция 0002) — расширение §5.3.
+- **Состояние проекта:** фаза 1 завершена + ревью-правки внесены.
+- **Коммит:** _не коммичено._
+
+### 2026-08-14 — фаза 1 — завершена реализация phone-hub ingestion + агрегатов
+
+- **Что:** Реализована фаза 1 целиком по `PHASE-1.md`. Custom channel `phone-hub`
+  (приём webhook'ов от forwarder'ов, Bearer-токен, нормализация payload, дедупликация,
+  запись в `raw_samples`); schedule `aggregate-raw` (схлопывание сырых сэмплов в
+  `daily_aggregates` по алгоритму §12.3 — cutoff-snapshot, upsert, удаление по TTL 30
+  дней); libs (`phone-hub-token`, `normalize`, `dedup`, `aggregates`, `log`,
+  `daily-read`) + `getUserTimezone`; инструменты `get-sleep`/`get-activity`/
+  `get-workouts`/`add-manual-data`/`rotate-phone-hub-token`; dev/mock-forwarder.
+- **Авто-верификация (✅):** `tsc --noEmit` чисто; `vitest run` — 74 теста зелёных
+  (+52: агрегаты по всем metric с DST/sleep-through-midnight, нормализация с variant
+  mapping, payload-hash/dedup, токен round-trip/constant-time); `eve build` проходит;
+  манифест подтверждает регистрацию канала `POST /eve/v1/phone-hub`, schedule
+  `aggregate-raw` (cron `0 3 * * *`, `hasRun`), 12 tools.
+- **Не авто-верифицировано (checklist для автора):** webhook end-to-end + aggregate
+  требуют docker-БД и локального `eve dev`. Шаги: (1) `docker compose up -d postgres`
+  + `npm run db:migrate`; (2) `npm run dev`; (3) пройди онбординг от своего chat_id
+  (или вставь user-строку); (4) `node --env-file=.env dev/mock-forwarder/mint-dev-token.mjs
+  <chat_id> android amazfit`; (5) `PHONE_HUB_TOKEN=… bash dev/mock-forwarder/send.sh`
+  → `HTTP 200` × 5, строки в `raw_samples`; (6) повтор `send.sh` → логи `dedup:
+  retry-dup`, новых строк нет; (7) чужой токен → `401`, кривой payload → `400`, тело
+  >1MB → `413`; (8) `curl -X POST …/dev/schedules/aggregate-raw` → `daily_aggregates`
+  заполнились (sleep через полночь → дата пробуждения; текущий день НЕ агрегирован).
+- **Затронутые файлы/артефакты (создано/изменено):**
+  - Либы: `agent/lib/{phone-hub-token,normalize,dedup,aggregates,log,daily-read}.ts`;
+    `agent/lib/tenant.ts` (+`getUserTimezone`); `agent/lib/env.ts`
+    (+`phoneHubWebhookUrl`).
+  - Канал: `agent/channels/phone-hub.ts`.
+  - Schedule: `agent/schedules/aggregate-raw.ts`.
+  - Tools: `agent/tools/db/{get-sleep,get-activity,get-workouts,add-manual-data}.ts`,
+    `agent/tools/settings/rotate-phone-hub-token.ts`.
+  - Инструкции: `agent/instructions.md` (фаза 1, новые tools, расстублен шаг 7).
+  - dev: `dev/mock-forwarder/{README.md,send.sh,mint-dev-token.mjs}`.
+  - Тесты: `tests/{aggregates,dedup,normalize,phone-hub-token}.test.ts`.
+  - Конфиг: `.env.example` (+`PHONE_HUB_WEBHOOK_URL`).
+- **Принятые решения и отклонения от спецификации (см. ниже «Спека»):**
+  1. **Контракт payload — Canonical + variant-mapping** (подтверждено автором). Канон.
+     формат — источник правды; слой маппинга по `platform` через `registerVariantMapper`
+     (пока identity). Реальные маппинги — при подключении устройства (откр. вопрос §20.1).
+  2. **`add-manual-data` → `raw_samples`** (`payload.source='manual'`), НЕ напрямую в
+     `daily_aggregates` (§5.5). Единый путь через `aggregate-raw` + дедуп.
+  3. **`recorded_at` = время события/измерения** для всех metric (sleep→wake_at,
+     workout→start_at, bucket→bucket-time). Дедуп uniformly по `(user_id, metric,
+     recorded_at)` + payload-hash. Разрешает напряжённость §12.4 (payload.bucket для
+     bucket-метрик избыточен при recorded_at=bucket — хранится для читаемости).
+  4. **Новый env `PHONE_HUB_WEBHOOK_URL`** — публичная база webhook'а (Caddy), из
+     которой `rotate-phone-hub-token` собирает URL. Спеку §14 стоит пополнить.
+  5. **Custom-маршрут eve монтируется ровно по пути из `POST(path)`** (проверено по
+     `node_modules/eve/dist` + манифесту: `urlPath: e.path`). Поэтому в канале пишу
+     полный `/eve/v1/phone-hub`. Закрывает риск PHASE-1 §8 (`defineChannel`+routes).
+  6. **`aggregate-raw` — `run`-handler с прямым DB-доступом** (не markdown-промпт и не
+     через `to()`/`appAuth`): алгоритм транзакционный, его нельзя доверять LLM.
+  7. **`resting_bpm` при отсутствии явного resting-сэмпла = суточный min** (прокси).
+  8. **Тесты — pure unit + manual checklist** (как фаза 0; интеграция через
+     mock-forwarder + dev-dispatch). `ingestSample` (с БД) покрывается интеграционно.
+- **Спека:** Фаза реализована по `PHASE-1.md` и `SPECIFICATION.md` §5.3/§6.1/§7.2/§8/
+  §9/§12.1–12.4/§13/§16/§17/§18. Отклонения: §5.5 (manual-data→raw_samples, фиксация),
+  §12.4 (payload.bucket избыточен), §14 (+env PHONE_HUB_WEBHOOK_URL). SPECIFICATION.md
+  §5.3/§5.5/§14 текстово обновлены синхронно (см. ниже).
+- **Состояние проекта:** фаза 1 завершена и авто-верифицирована. Фазы 2–6 не начаты.
+- **Коммит:** _не коммичено._
 
 ### 2026-08-11 — фаза 0 — правки по ревью (7 замечаний: 3 высоких, 4 средних)
 

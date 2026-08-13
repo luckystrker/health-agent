@@ -413,6 +413,11 @@ Health Connect (Android). Forwarder-приложение читает эти х�
 - Маршрут `POST /eve/v1/phone-hub` через `defineChannel({ routes: [POST(...)] })`.
 - Заголовок `Authorization: Bearer <token>` → ищем `phone_hub_tokens.token_hash`.
 - Тело: нормализованный payload `{ device_label, metric, recorded_at, payload }`.
+  **Контракт (Canonical + variant-mapping, фиксация фазы 1):** webhook ожидает
+  канонический формат payload по `metric` (см. `agent/lib/normalize.ts`); `platform` и
+  `device_label` берутся из авторизованной записи токена (не из тела). Для forwarder'ов,
+  шлющих свои имена полей, есть слой маппинга по `platform` (`registerVariantMapper`) —
+  реальные маппинги добавляются при подключении устройства (откр. вопрос §20.1).
 - Логика: валидация → запись в `raw_samples`. Инкрементальный агрегат в webhook'е НЕ
   считается — агрегация идёт scheduled-джобом `aggregate-raw` (см. §12.3). Свежесть данных
   для алертов/сводок по текущему дню — из `raw_samples` напрямую (см. §12.3 «Свежесть для
@@ -793,8 +798,13 @@ for (const u of onboardedUsers()) {
 
 ### 12.2 Пропуски данных
 - Если за день нет данных с часов — в отчёте/анализе день помечается «нет данных».
-- Юзер может зафиксировать вручную через `add-manual-data` («спал 6ч, лёг 00:30, встал 06:30»);
-  manual-запись имеет приоритет при отсутствии автоматических.
+- Юзер может зафиксировать вручную через `add-manual-data` («спал 6ч, лёг 00:30, встал 06:30»).
+  Решение (фаза 1, review): manual-записи пишутся в `raw_samples` (`payload.source='manual'`).
+  Unique-индекс `(user_id, metric, recorded_at)` (миграция 0002) означает **один сэмпл на
+  событие/бакет** → manual и device для одного бакета НЕ суммируются (last-write-wins). Назначение
+  manual — заполнять пробелы (когда данных с часов нет); обычно синхронизация устройства приходит
+  позже и перезаписывает placeholder (устройство авторитетно). Для сна/тренировок upsert по
+  recorded_at даёт «последняя версия границ выигрывает». (PHASE-1 §5.5, STATUS.md.)
 - Для трендов используются медианы по доступным дням (не выбрасываются).
 - **Поздние сэмплы после офлайна телефона:** forwarder шлёт ≥15 мин, но батчи могут прийти с
   `recorded_at` глубоко в прошлом. Все поздние сэмплы попадают в `raw_samples` и подхватываются
@@ -849,7 +859,10 @@ for (const u of onboardedUsers()) {
 - **`sleep_session`:** дедупликация по `(user_id, metric, recorded_at)` с **upsert** — одна и
   та же ночь приходит несколько раз с уточнёнными границами, последняя версия выигрывает.
 - **Потоковые bucket-метрики (`steps` почасово, `heart_rate` минутно):** дедупликация по
-  `(user_id, metric, recorded_at, payload.bucket)` — каждый bucket уникален.
+  `(user_id, metric, recorded_at, payload.bucket)` — каждый bucket уникален. На практике
+  `recorded_at` уже = старт бакета (§5.3, фиксация в STATUS.md фазы 1), поэтому ключ
+  `(user_id, metric, recorded_at)` однозначен; `payload.bucket` хранится как человеко-читаемая
+  метка и избыточен для дедупа.
 - **`workout`:** по `(user_id, metric, recorded_at)` + upsert.
 - payload-hash как дополнительная защита от точных дублей ретраев forwarder'а.
 
@@ -934,6 +947,7 @@ FATSECRET_CLIENT_ID=
 FATSECRET_CLIENT_SECRET=
 # Phone-hub
 PHONE_HUB_TOKEN_SALT=       # для хэширования токенов forwarder'ов
+PHONE_HUB_WEBHOOK_URL=      # публичная база webhook'а (Caddy); из неё строится ${URL}/eve/v1/phone-hub
 # Модель
 MODEL_API_KEY=
 ```
