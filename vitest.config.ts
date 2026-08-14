@@ -10,6 +10,9 @@ export default defineConfig({
     env: {
       DATABASE_URL: "postgres://health:dev@127.0.0.1:5432/health",
       ALLOWED_CHAT_IDS: "111,222",
+      // FatSecret-подпись OAuth 1.0a в fetch-mock тестах (реальных запросов нет).
+      FATSECRET_CLIENT_ID: "test-key",
+      FATSECRET_CLIENT_SECRET: "test-secret",
     },
   },
 });

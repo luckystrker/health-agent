@@ -21,7 +21,7 @@
 |------|----------|--------|--------------|-----------|
 | **0** | Скелет eve: Telegram, БД, schema, онбординг | ✅ завершена | [`PHASE-0.md`](./phases/PHASE-0.md) | Telegram-канал + allowlist, schema всех 13 таблиц + миграции (drizzle), онбординг (model-driven, 10 шагов), `requireUser`/`userAuthFor`, tone-пресеты, 5 settings-инструментов + complete-onboarding/get-my-status, unit-тесты (22 зелёных). **Модель:** `opencode-go/deepseek-v4-flash` (128k context, escape-hatch). Авто-верифицировано: typecheck, `eve build`, docker compose + `drizzle-kit migrate` (13 таблиц + pgcrypto), vitest. **Не авто-верифицировано** (нужны реальные креды/туннель): Telegram end-to-end онбординг — см. checklist в журнале. |
 | **1** | Phone-hub ingestion + агрегаты | ✅ завершена | [`PHASE-1.md`](./phases/PHASE-1.md) | Custom channel `phone-hub` (`POST /eve/v1/phone-hub`, Bearer-токен, нормализация, дедуп, запись в `raw_samples`); schedule `aggregate-raw` (raw→daily, cutoff-snapshot, §12.3); libs `phone-hub-token`/`normalize`/`dedup`/`aggregates`/`log`/`daily-read`; tools `get-sleep`/`get-activity`/`get-workouts`/`add-manual-data`/`rotate-phone-hub-token`; dev/mock-forwarder. **Миграция 0002**: unique-индекс `raw_samples (user_id, metric, recorded_at)` (фикс гонки/двойного счёта). Unit-тесты (+52, всего 74 зелёных). Авто-верифицировано: typecheck, `eve build`, manifest (phone-hub route + schedule `0 3 * * *` + 12 tools), vitest. **Не авто-верифицировано** (нужны docker-БД + туннель): webhook end-to-end + apply миграций 0000–0002 — checklist ниже. |
-| **2** | FatSecret (OAuth) + food_entries + калории | 🔲 не начата | [`PHASE-2.md`](./phases/PHASE-2.md) | Зависит от фазы 0; OAuth 1.0a 3-legged PIN-flow. |
+| **2** | FatSecret (OAuth) + food_entries + калории | ✅ завершена | [`PHASE-2.md`](./phases/PHASE-2.md) | Своя FatSecret-интеграция (не MCP): OAuth 2.0 client-credentials (app-токен в памяти, refresh за 1ч) + OAuth 1.0a 3-legged PIN-flow (`connect/complete-fatsecret`, HITL `ask_question`); `log-food` (search→details→log→копия в `food_entries`; manual/barcode_off), `lookup-barcode` (FatSecret→Open Food Facts), `get-food`/`get-calorie-balance`/`get-target-calories`; `lib/calories.ts` (Mifflin-St Jeor, фактор из 14 дней, cold-start fallback, пол-минимумы); schedule `sync-fatsecret-diary` (get_month+get → upsert по external_id + удаление исчезнувших). Подпись OAuth 1.0a — ручной HMAC-SHA1 (без зависимости), сверена с RFC 5849 + эрратой 2550. Unit-тесты (+63, всего 137). Ревью-правки P1: таймаут 15с на все FatSecret-fetch'и (каждая retry-попытка), классификация ошибок app-токена (fs_auth_failed ≠ fs_not_configured; сеть → fs_unavailable). Авто-верифицировано: typecheck, `eve build`, manifest (19 tools + schedule `0 4 * * *`), vitest. **Не авто-верифицировано** (нужны реальные FatSecret-креды + туннель + docker-БД): end-to-end PIN-flow, запись в дневник, sync — см. checklist в журнале. ⚠️ Риск: region/language и find_id_for_barcode в доках v1 помечены Premier — на free-тарифе возможна деградация до US-базы/OFF-фолбэка (не ошибка, обработано). |
 | **3** | Недельный отчёт + графики + tone-пресеты | 🔲 не начата | [`PHASE-3.md`](./phases/PHASE-3.md) | Зависит от фаз 1–2 (нужны агрегаты + питание). |
 | **4** | Проактивные сообщения (dispatcher, алерты, workout) | 🔲 не начата | [`PHASE-4.md`](./phases/PHASE-4.md) | Зависит от фаз 0–3. |
 | **5** | Тренировочная программа (wger + адаптация) | 🔲 не начата | [`PHASE-5.md`](./phases/PHASE-5.md) | Зависит от фаз **0 и 4** (фаза 4 — `workout-reminder` потребляет `reminder_settings.workout_times`); wger REST без ключа. |
@@ -73,6 +73,160 @@
 > - Спека: <ссылка на раздел SPECIFICATION.md или PHASE-N.md, если менялась>
 > - Коммит: <hash или "не коммичено">
 > ```
+
+### 2026-08-14 — фаза 2 — правки по ревью (2 замечания P1)
+
+- **Что:** По итогам код-ревью фазы 2 исправлены 2 замечания P1. Авто-верификация
+  после правок: `tsc --noEmit` чисто; `vitest run` — 137 тестов (+7: классификация
+  ошибок getAppToken через fetch-mock, presence таймаут-сигнала в контрактах,
+  маппинг fsErrorPayload); `eve build` проходит.
+- **1. Таймауты на ВСЕ fetch к FatSecret.** `fetchWithRetry`,
+  `fetchRequestToken`, `fetchAccessToken`, `getAppToken` вызывали fetch без
+  сигнала — Node fetch не имеет дефолтного таймаута, зависший FatSecret вешал
+  tool-вызов/ночной sync навсегда. **Фикс:** `FS_FETCH_TIMEOUT_MS = 15_000`
+  (экспорт из `lib/fatsecret-oauth.ts`), `AbortSignal.timeout(...)` на каждую
+  попытку (retry получает свежий сигнал; сигнал покрывает и чтение тела —
+  `res.text()/json()`). TimeoutError попадает в catch → ретрай → после
+  исчерпания `FsApiError('network')` → friendly fs_unavailable. OFF-фолбэк
+  уже имел 8с — не тронут.
+- **2. Классификация ошибок `getAppToken` (и oauth-flow fetch'ей).** Любой
+  не-OK статус сваливался в `FsOauthError('fs_not_configured')` — битые креды
+  (401/400 invalid_client) сообщались юзеру как «отсутствуют
+  FATSECRET_CLIENT_ID/SECRET»; сетевой сбой долетал сырым TypeError →
+  fs_unexpected. **Фикс:** 400/401 → новый код `fs_auth_failed` («FatSecret
+  отклонил ключи приложения»); прочие не-OK и сеть/таймаут → `fs_unavailable`;
+  `fs_not_configured` остался только у `requireConsumer` (env реально пуст).
+  Аналогично разведено в `fetchRequestToken` (401/403 → fs_auth_failed) и
+  `fetchAccessToken` (сеть → fs_unavailable). `fsErrorPayload` переписан на
+  `instanceof FsOauthError` (убран duck-typing) + friendly-сообщения для всех
+  кодов. Сопутствующее: `complete-fatsecret` больше НЕ сбрасывает pending-флоу
+  при ретраебельных сбоях (`fs_invalid_pin`, `fs_unavailable`) — юзер может
+  повторить PIN в рамках TTL 15 мин (раньше сетевой сбой убивал флоу).
+- **Затронутые файлы:** `agent/lib/fatsecret-oauth.ts` (+`FS_FETCH_TIMEOUT_MS`,
+  классификация), `agent/lib/fatsecret-api.ts` (signal в `fetchWithRetry`,
+  `fsErrorPayload`), `agent/tools/nutrition/complete-fatsecret.ts` (ретраебельные
+  сбои); `tests/{fatsecret-oauth,fatsecret-api}.test.ts`.
+- **Спека:** поведение §16 не нарушено, уточнено (виды ошибок разведены по
+  кодам; таймауты — недостающая часть «сеть/FatSecret даун»). PHASE-2 §7
+  (retry/backoff) — дополнено таймаутом на попытку.
+- **Состояние проекта:** фаза 2 завершена + ревью-правки P1 внесены.
+- **Коммит:** _не коммичено._
+
+### 2026-08-14 — фаза 2 — завершена реализация FatSecret (OAuth) + food_entries + калории
+
+- **Что:** Реализована фаза 2 целиком по `PHASE-2.md`. FatSecret-интеграция собственными
+  tools с прямыми подписанными fetch'ами (не MCP, §6.2): поиск (OAuth 2.0
+  client-credentials, app-токен в памяти процесса, refresh за ~1ч до истечения 24ч TTL,
+  single-flight), запись/чтение дневника (OAuth 1.0a 3-legged PIN-flow через HITL),
+  фолбэк штрихкодов (Open Food Facts); копии строк дневника в `food_entries`;
+  гибридный расчёт калорий (вариант C) с cold-start fallback; schedule
+  `sync-fatsecret-diary` (ежедневный upsert по `external_id` + удаление исчезнувших
+  записей).
+- **Авто-верификация (✅):** `tsc --noEmit` чисто; `vitest run` — 130 тестов зелёных
+  (+56: OAuth 1.0a подпись на векторе RFC 5849 §3.4.1.1 + verified-эррата 2550,
+  percent-encoding, epoch-days, нормализация FatSecret-ответов (object|array-кверки,
+  meal other→snack, даты), fetch-mock контракты запросов (region=RU в теле, Bearer,
+  OAuth-заголовок, date→epoch-days), OFF-парсер, entryToRowValues (consumed_at по
+  каноническому meal-времени), calories (BMR, пороги фактора, бампы, cold-start, цели,
+  полы, calorie_source), TTL pending-flow и окно refresh app-токена); `eve build`
+  проходит; манифест подтверждает 19 tools (7 новых: nutrition-connect/complete-fatsecret,
+  nutrition-log-food, nutrition-lookup-barcode, db-get-food, db-get-calorie-balance,
+  goals-get-target-calories) + schedule `sync-fatsecret-diary` (cron `0 4 * * *`).
+- **Не авто-верифицировано (checklist для автора; нужны реальные FatSecret-креды +
+  туннель + docker-БД):** (1) зарегистрировать FatSecret-app (platform.fatsecret.com),
+  взять `FATSECRET_CLIENT_ID/SECRET`; проверить, требует ли консоль whitelist IP VPS
+  для oauth-эндпоинта; (2) `docker compose up -d postgres` + `npm run db:migrate`;
+  (3) `npm run dev` + туннель; (4) в чате: «подключи FatSecret» → `connect-fatsecret`
+  → открыть authorize URL → PIN → ответить боту → `complete-fatsecret` → строка в
+  `fatsecret_tokens`; (5) `log-food`: поиск («овсянка») → проверить, что результаты
+  русские (эффект region=RU — см. риск ниже) → details → log → строка в
+  `food_entries` (source='fatsecret') и в приложении FatSecret; (6) `lookup-barcode`
+  по реальному штрихкоду; (7) внести еду напрямую в приложение FatSecret →
+  `curl -X POST …/dev/schedules/sync-fatsecret-diary` → upsert/удаление в
+  `food_entries` (§17 dev-dispatch); (8) `get-target-calories` → оба числа
+  (по боту/по часам), `get-calorie-balance` за 7 дней; (9) опционально: 401 (отозвать
+  токен в FatSecret) → бот предлагает переподключение, токен помечен revoked_at.
+- **Затронутые файлы/артефакты (создано/изменено):**
+  - Либы: `agent/lib/fatsecret-oauth.ts` (подпись HMAC-SHA1 RFC 5849, PIN-flow,
+    pending-флоу TTL 15 мин, app-токен кэш), `agent/lib/fatsecret-api.ts` (REST-клиент,
+    retry/ошибки §16, нормализаторы, epoch-days), `agent/lib/calories.ts` (BMR +
+    фактор + цели + DB-обёртка), `agent/lib/food-read.ts` (чтение food_entries за
+    период), `agent/lib/time.ts` (+`localTimeToUtc`).
+  - Tools: `agent/tools/nutrition/{connect-fatsecret,complete-fatsecret,log-food,
+    lookup-barcode}.ts`, `agent/tools/db/{get-food,get-calorie-balance}.ts`,
+    `agent/tools/goals/get-target-calories.ts`.
+  - Schedule: `agent/schedules/sync-fatsecret-diary.ts`.
+  - Инструкции: `agent/instructions.md` (фаза 2: питание, калории, PIN-flow, шаг 8
+    онбординга теперь реальный), `agent/instructions/onboarding-guard.ts`.
+  - Тесты: `tests/{fatsecret-oauth,calories,fatsecret-api}.test.ts`; `vitest.config.ts`
+    (+env FATSECRET_* для fetch-mock).
+  - Модель данных: БЕЗ изменений (таблицы `food_entries`/`fatsecret_tokens` из фазы 0
+    наполняются); новых миграций и env-переменных нет.
+- **Принятые решения и отклонения от спецификации:**
+  1. **Подпись OAuth 1.0a — ручной HMAC-SHA1, без пакета `oauth-1.0a`** (риск PHASE-2
+     §9 закрыт). ~40 строк в `lib/fatsecret-oauth.ts`, полностью unit-тестируема:
+     base string воспроизводит пример RFC 5849 §3.4.1.1 посимвольно, подпись совпадает
+     с корректной по verified-эррате 2550 (`r6/TJjbCOr97/+UU0NsvSne7s5g=`; сам RFC
+     напечатал GET-подпись). Новых зависимостей нет.
+  2. **PIN-flow HITL подтверждён** (риск §9 закрыт): built-in `ask_question` с
+     `allowFreeform` — это и есть `input.requested` парковка из спеки (eve
+     `docs/tools/human-in-the-loop.md`); turn паркуется durably, ответ юзера
+     возобновляет его, модель зовёт `complete-fatsecret`. **Request-token держится в
+     памяти процесса (TTL 15 мин), а НЕ в resume-значении park-хука** — секрет не
+     должен проходить через контекст модели (§13). Рестарт процесса в окне PIN →
+     юзер перезапускает подключение (тот же исход, что таймаут). Неверный PIN НЕ
+     сбрасывает флоу (ретрай в рамках TTL).
+  3. **Эндпоинты OAuth 1.0a — `authentication.fatsecret.com`** (актуальная дока
+     FatSecret; старые `platform/rest`-URL'ы деприкейтед и отдавали 500). REST —
+     `platform.fatsecret.com/rest/server.api`. Спека §6.2 хосты не фиксировала.
+  4. **`food_entries.get_month` возвращает только дневные ИТОГИ** (не записи) —
+     поэтому sync использует get_month (как в спеке) для поиска дней с записями, а
+     построчно читает `food_entries.get` по каждому целевому дню. Целевые дни =
+     {вчера, сегодня} ∪ дни месяца с записями ∪ дни, где у нас уже есть
+     fatsecret-строки. Дополнительно к §18.2: записи, удалённые юзером в приложении,
+     удаляются из нашей копии (reconciliation в пределах текущего месяца);
+     manual/barcode_off-строки не трогаются никогда.
+  5. **⚠️ Риск тира FatSecret: `region`/`language` (v1 foods.search/food.get) и
+     `food.find_id_for_barcode` помечены в доках Premier-exclusive.** На free-тарифе
+     параметры могут игнорироваться (деградация до US-базы, не ошибка) или метод
+     штрихкода возвращать ошибку (→ сработает OFF-фолбэк, обработано). Параметры
+     всё равно шлются всегда (принудительно из кода, `LOCALE_PARAMS` в
+     `lib/fatsecret-api.ts`). Проверить на реальном app'е (checklist п.5–6).
+  6. **Формула фактора активности квантифицирована** (спека §11.2 формулу не
+     задавала): пороги по средним шагам/день (<5000→1.2, <7500→1.375, <10000→1.55,
+     ≥10000→1.725) + бампы за active_minutes (≥30→+0.05, ≥60→+0.1) + слабый HR-
+     модификатор (медиана resting_bpm ≥85 → +0.025); clamp [1.2, 1.9]; максимум
+     дефицита/профицита 1100 ккал/день (~1 кг/нед); пол-минимум цели 1200/1500 ккал
+     (применение флагается `floor_applied`). TDEE_часы = BMR + средние
+     active_calories (§11.2 буквально).
+  7. **Маркер перехода cold-start → реальные данные — in-memory** (`switched` в
+     `computeCaloriePlanForUser`, возвращается `get-target-calories`; инструкция
+     велят модели объявить переход). Паттерн §9 fuzzy-dedup: фиксирует только
+     наблюдённый переход, рестарт сбрасывает тихо. Авторитетная проверка — в
+     dispatcher фазы 4.
+  8. **consumed_at при sync/логе:** FatSecret не отдаёт время приёма — канонические
+     локальные времена по meal (09:00/13:00/19:00/16:00, `mealDefaultLocalTime`);
+     атрибуция дня — по колонке `day`. meal на чтении: «other»→snack; на записи —
+     «Breakfast» (формат из доки).
+  9. **401 на user-level вызовах** (log-food action=log, sync) помечает токен
+     `revoked_at=now()` + лог → модель/юзер направляются на переподключение (§16).
+     OAuth-коды FatSecret 2–9 в JSON-теле приравнены к unauthorized.
+  10. **Новые файлы сверх таблицы §3 PHASE-2:** `lib/fatsecret-api.ts` (REST-клиент
+      вынесен из fatsecret-oauth.ts ради читаемости), `lib/food-read.ts` (общее чтение
+      питания для get-food/get-calorie-balance/фазы 3). Состав артефактов фазы не
+      меняет.
+  11. **log-food manual-режим** (без FatSecret: source='manual'/'barcode_off') —
+      заполняет семантику `food_entries.source` из §5.4 и покрывает случай
+      неподключённого FatSecret.
+- **Спека:** Фаза реализована по `PHASE-2.md` и `SPECIFICATION.md` §5.4/§5.7/§6.2/§8/
+  §9/§11.2/§13/§16/§18.1–18.2. Отклонения/уточнения (выше): PIN-flow state в памяти
+  (п.2), get_month+get комбо (п.4), Premier-риск region (п.5), квантификация формулы
+  (п.6), in-memory switched-маркер (п.7), meal-времена (п.8), доп. файлы (п.10).
+  SPECIFICATION.md текстово не правился — решения зафиксированы здесь; для §6.2
+  стоит отразить эндпоинты authentication.fatsecret.com и Premier-риск при следующей
+  ревизии спеки.
+- **Состояние проекта:** фаза 2 завершена и авто-верифицирована. Фазы 3–6 не начаты.
+- **Коммит:** _не коммичено._
 
 ### 2026-08-14 — фаза 1 — правки по ревью (3 замечания, средние)
 

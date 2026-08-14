@@ -115,6 +115,22 @@ export function localDayRangeUtc(
 }
 
 /**
+ * UTC-момент локального времени "HH:MM" в локальном дне `dayStr` (tz юзера).
+ *
+ * Используется для `food_entries.consumed_at`: FatSecret не отдаёт точное время
+ * приёма, только день+meal — берём каноническое время приёма (фаза 2). Точность
+ * до часа достаточна: атрибуция дня идёт по отдельной колонке `day` (§5.4).
+ * DST-нюанс: смещение берётся от полуночи дня; внутри переходного дня сдвиг
+ * может отличаться на час — для времени приёма пищи это несущественно.
+ */
+export function localTimeToUtc(dayStr: string, hhmm: string, tz: string): Date {
+  const m = /^(\d{2}):(\d{2})$/.exec(hhmm);
+  if (!m) throw new Error(`Invalid local time: "${hhmm}" (expected HH:MM)`);
+  const { start } = localDayRangeUtc(dayStr, tz);
+  return new Date(start.getTime() + (Number(m[1]) * 60 + Number(m[2])) * 60_000);
+}
+
+/**
  * Локальный день, к которому относится сон (дата пробуждения, §12.1).
  * `sleepEndUtc` — момент пробуждения.
  */
