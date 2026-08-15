@@ -349,7 +349,9 @@ workout_logs (                                    -- выполнение (од�
   program_version int,
   scheduled_day   date,                           -- к какому дню плана относится
   performed_at    timestamptz,
-  status          text not null,                  -- 'completed' | 'skipped' | 'rescheduled' | 'partial'
+  status          text not null,                  -- 'completed' | 'skipped' | 'rescheduled' | 'partial' |
+                                                  -- 'pending' (разовый перенос на будущую дату; фиксация
+                                                  -- фазы 5 — PHASE-5 §5.4 Примечание)
   notes           text,
   source          text not null default 'manual'  -- 'manual' (device_detected — отдельной фазой)
 )
@@ -1078,9 +1080,11 @@ MODEL_API_KEY=
 3. **Стабильность iOS-форвардера.** Если выбирается платный «Health Webhook» ($14.99) —
    проверить покрытие нужных метрик (особенно sleep-стадии и HR) и надёжность retry.
    Если `iicodemai-wq/health-bridge-for-ha` (MIT, 0★) — заложить время на self-build/тесты.
-4. **wger: OpenAPI-коннекция vs свои tools.** В спеке выбраны свои tools (`build-program` с
-   прямыми `fetch`); при имплементации подтвердить, что этого достаточно, или завернуть
-   `/api/v2/exerciseinfo/` в `defineOpenAPIConnection` если нужен более широкий поиск.
+4. **wger: OpenAPI-коннекция vs свои tools — решено (фаза 5).** Свои tools с прямыми fetch
+   (`lib/wger.ts`: поиск с фильтрами по `/api/v2/exerciseinfo/`, карточка с переводами,
+   кэшируемые таксономии) достаточны: фильтрация и приоритет RU-переводов контролируются
+   кодом, поиск по категории/оборудованию покрывает подбор программы. OpenAPI-коннекция
+   не потребовалась.
 5. **Динамический schedule-store на фазе масштабирования.** На v1 — статичные cron'ы + loop
    по `users` (§9). При росте аудитории свыше ~10 юзеров — перейти на паттерн
    `patterns/dynamic-scheduling.md` (schedule-store с `nextRunAt`/lease) для точности

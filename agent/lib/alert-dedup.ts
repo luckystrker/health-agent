@@ -6,7 +6,9 @@
  *  - daily-джобы: `(user_id, kind, local_date)`, kind ∈ {morning, midday, evening};
  *  - workout-reminder: `(user_id, day_of_week, local_date)`;
  *  - anomaly-check (rate-limit): `(user_id, type, local_date)` — не чаще 1 алерта
- *    типа на юзер×день.
+ *    типа на юзер×день;
+ *  - program-check (фаза 5): `(user_id, local_date)` — не чаще одной
+ *    адаптационной сессии в день.
  *
  * Признанный компромисс (PHASE-4 §8): счётчик в памяти процесса; рестарт
  * обнуляет → возможен редкий второй алерт в день рестарта (лучше дубля, чем
@@ -41,6 +43,11 @@ export function workoutReminderKey(userId: string, dayOfWeek: number, localDate:
 /** Ключ rate-limit алерта аномалии: (user_id, type, local_date). */
 export function anomalyAlertKey(userId: string, type: string, localDate: string): string {
   return `anomaly:${type}:${userId}:${localDate}`;
+}
+
+/** Ключ сессии program-check: (user_id, local_date) — не чаще раза в день. */
+export function programCheckKey(userId: string, localDate: string): string {
+  return `program-check:${userId}:${localDate}`;
 }
 
 export function keyAlreadySent(key: string): boolean {

@@ -107,6 +107,18 @@ describe("buildWorkoutPrompt", () => {
     expect(p).toContain("не выдумывай упражнения");
     expect(p).toContain("Не задавай вопросов");
   });
+
+  it("фаза 5: упражнения программы дня — в блоке плана, перевод на русском", () => {
+    const p = buildWorkoutPrompt("18:30", [
+      { exercise_name_en: "Bench Press", sets: 4, reps: "8-12" },
+      { exercise_name_en: "Plank", sets: null, reps: "60s" },
+    ]);
+    expect(p).toContain("План на сегодня");
+    expect(p).toContain("Bench Press ×4 (8-12)");
+    expect(p).toContain("Plank (60s)");
+    expect(p).toContain("переведи на русский");
+    expect(p).not.toContain("не выдумывай"); // план есть — запрет не нужен
+  });
 });
 
 describe("buildAnomalyPrompt", () => {

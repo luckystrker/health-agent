@@ -8,7 +8,7 @@
 > (фаза, задача, багфикс, изменение модели/env/зависимостей, отклонение от спеки) — должна
 > быть отражена здесь. Журнал правок — append-only, новые записи сверху.
 
-Дата последнего обновления: **2026-08-15**.
+Дата последнего обновления: **2026-08-16**.
 
 ---
 
@@ -24,7 +24,7 @@
 | **2** | FatSecret (OAuth) + food_entries + калории | ✅ завершена | [`PHASE-2.md`](./phases/PHASE-2.md) | Своя FatSecret-интеграция (не MCP): OAuth 2.0 client-credentials (app-токен в памяти, refresh за 1ч) + OAuth 1.0a 3-legged PIN-flow (`connect/complete-fatsecret`, HITL `ask_question`); `log-food` (search→details→log→копия в `food_entries`; manual/barcode_off), `lookup-barcode` (FatSecret→Open Food Facts), `get-food`/`get-calorie-balance`/`get-target-calories`; `lib/calories.ts` (Mifflin-St Jeor, фактор из 14 дней, cold-start fallback, пол-минимумы); schedule `sync-fatsecret-diary` (get_month+get → upsert по external_id + удаление исчезнувших). Подпись OAuth 1.0a — ручной HMAC-SHA1 (без зависимости), сверена с RFC 5849 + эрратой 2550. Unit-тесты (+63, всего 137). Ревью-правки P1: таймаут 15с на все FatSecret-fetch'и (каждая retry-попытка), классификация ошибок app-токена (fs_auth_failed ≠ fs_not_configured; сеть → fs_unavailable). Авто-верифицировано: typecheck, `eve build`, manifest (19 tools + schedule `0 4 * * *`), vitest. **Не авто-верифицировано** (нужны реальные FatSecret-креды + туннель + docker-БД): end-to-end PIN-flow, запись в дневник, sync — см. checklist в журнале. ⚠️ Риск: region/language и find_id_for_barcode в доках v1 помечены Premier — на free-тарифе возможна деградация до US-базы/OFF-фолбэка (не ошибка, обработано). |
 | **3** | Недельный отчёт + графики + tone-пресеты | ✅ завершена | [`PHASE-3.md`](./phases/PHASE-3.md) | Schedule `weekly-report` (cron `0 10 * * 1`): dispatcher по §9 (`userAuthFor` → `to(telegram).send`) + digest-промпт; `lib/weekly-digest` (единый источник трендов: сон/шаги/вес/калории/тренировки за 7 завершённых локальных дней); tool `render-chart` (сон/вес/шаги/калории → PNG локально → прямой `sendPhoto`); `lib/chart-config` (pure-конфиги) + `lib/telegram-send` (multipart, 429-backoff с retry_after, 403→blocked); 403-детект в канале (`message.completed` override → `users.blocked`); тренды в `user-context.ts` (TTL-кэш 10 мин). Зависимости: `chartjs-node-canvas@^5` + `chart.js@^4.5` (+нативный `canvas@3`). Unit-тесты (+49, всего 186). Авто-верифицировано: typecheck, `eve build` (20 tools + schedule в манифесте; PNG-рендер из собранного бандла), vitest. **Не авто-верифицировано** (нужны туннель + docker-БД + реальный бот + Linux VPS) — см. checklist в журнале. |
 | **4** | Проактивные сообщения (dispatcher, алерты, workout) | ✅ завершена | [`PHASE-4.md`](./phases/PHASE-4.md) | Schedules `daily-morning/midday/evening` + `workout-reminder` (все `0 * * * *`, симметричное fuzzy-окно ±30 мин в локальном времени, круговое сравнение — слоты через полночь; dedup in-memory `(user, kind/type, local_date)`); `anomaly-check` (`*/30 * * * *`) — 4 порога (сон <5ч / отбой >02:00; калории >125% цели; шаги <50% 7-дневной медианы после 18:00 при ≥3 днях; вес ±2.5%/±1 кг, ≥3 измерений) с rate-limit 1 алерт/тип/юзер×день; текущий день — из `raw_samples`/`food_entries` (агрегата текущего дня нет, §12.3), цель — `lib/calories`; `lib/proactive-send` (429-backoff), `lib/today-vitals` (снимок дня + факты утра). Unit-тесты (+63, всего 249). Авто-верифицировано: typecheck, `eve build`, manifest (8 schedules + 20 tools), vitest. **Не авто-верифицировано** (нужны docker-БД + туннель + реальный бот) — см. checklist в журнале. |
-| **5** | Тренировочная программа (wger + адаптация) | 🔲 не начата | [`PHASE-5.md`](./phases/PHASE-5.md) | Зависит от фаз **0 и 4** (фаза 4 — `workout-reminder` потребляет `reminder_settings.workout_times`); wger REST без ключа. |
+| **5** | Тренировочная программа (wger + адаптация) | ✅ завершена | [`PHASE-5.md`](./phases/PHASE-5.md) | `lib/wger.ts` (свои tools с прямыми fetch — §20.4 закрыт: `/exerciseinfo/` с фильтрами + карточка со ВСЕМИ переводами; RU-приоритет (language id динамически, fallback 5), EN — сырье для LLM-перевода; таймаут 15с/попытка, retry 429/5xx/сеть, кэш таксономий/языков in-process); `lib/program-store.ts` (новая version одной транзакцией, plan = строки `program_sessions`, pure-хелперы слотов/масштабирования); tools `build-program` (catalog/search/save/apply_times; HITL-подтверждение workout_times Заменить/Оставить мои/Смешать), `reschedule` (move_once/move_weekly/lighten/rebuild; регулярный перенос синхронизирует workout_times), `log-workout` (completed/skipped/partial; upsert-семантика на дату); schedule `program-check` (`0 5 * * *`): незалогированные сессии/просроченные pending/≥2 skipped+partial → proactive-сессия с фактами → `reschedule`; разовый pending-пернос напоминается program-check'ом в его дату; workout-reminder обогащён упражнениями дня (best-effort). **Модель данных:** `workout_logs.status` += `'pending'` (PHASE-5 §5.4; SPECIFICATION §5.5 обновлена, новых миграций нет). Unit-тесты (+46, всего 302). Правки по ревью 2026-08-16 (P1: адопция pending при пересборке + поиск лога без фильтра версии; P2: повторный move_once по исходной дате, guard'ы «уже отмечено»/«не будущее», wger 429 → Retry-After). Авто-верифицировано: typecheck, `eve build`, manifest (23 tools + 9 schedules), vitest. **Не авто-верифицировано** (нужны docker-БД + туннель + реальный бот) — см. checklist в журнале. |
 | **6** | Полировка: edge-cases, удаление данных, мониторинг | 🔲 не начата | [`PHASE-6.md`](./phases/PHASE-6.md) | Зависит от фаз 0–5. |
 | **7** (опц.) | Мобильный мост для CMF by Nothing | 🔲 отложена | [`PHASE-7.md`](./phases/PHASE-7.md) | За рамками первого релиза; активируется по запросу. |
 
@@ -73,6 +73,189 @@
 > - Спека: <ссылка на раздел SPECIFICATION.md или PHASE-N.md, если менялась>
 > - Коммит: <hash или "не коммичено">
 > ```
+
+### 2026-08-16 — фаза 5 — правки по ревью (1 замечание P1, 3 замечания P2)
+
+- **Что:** По итогам код-ревью фазы 5 исправлены 4 замечания. Авто-верификация
+  после правок: `tsc --noEmit` чисто; `vitest run` — 302 теста (+4: 429 c
+  Retry-After — пауза ровно из заголовка на fake timers (4.999с из 5 — вторая
+  попытка ещё не началась), 429 без заголовка — пауза 2с (не 400мс);
+  `pendingOriginFromNotes` — исходная дата из notes, включая суффикс-примечание
+  и отрицательные случаи; `isFutureLocalDay` — строго позже сегодня);
+  `eve build` проходит; манифест без изменений (23 tools + 9 schedules).
+- **P1. Осиротевшие pending после пересборки программы.** Разовый перенос
+  создавал pending под тогдашней `program_version`; после rebuild
+  `log-workout` искал существующую строку с фильтром по АКТИВНОЙ версии →
+  дата не в новой программе давала `day_not_in_program` (отметить нельзя
+  вовсе), день программы — дубль-строку, а pending оставался навсегда;
+  `program-check` (логи без фильтра версии) вечно считал его просроченным →
+  незакрываемая ежедневная proactive-сессия. **Фикс (двойной):** (1)
+  `saveProgramVersion` в той же транзакции перецепляет открытые
+  `status='pending'` строки на новую версию — намерение «потренируюсь в дату
+  X» переживает пересборку; (2) `log-workout` ищет существующую строку по
+  `(user, scheduled_day)` БЕЗ фильтра версии (защита от любых рассинхронов
+  версий). Историю (completed и пр.) это не трогает.
+- **P2. Повторный move_once плодил вторую пару rescheduled+pending.** Lookup
+  pending шёл только по `from_scheduled_day`; повторный перенос «от исходной
+  даты» (pending уже сдвинут на другую дату) создавал дубль. **Фикс:**
+  fallback-поиск pending по notes-паттерну `перенос с <from>%`; notes
+  pending-строки ВСЕГДА хранит исходную дату сессии (сколько бы раз её ни
+  двигали) — pure `pendingOriginFromNotes` (+`PENDING_ORIGIN_PREFIX` в
+  program-store), дубли физически невозможны: повтор ищет и двигает ту же
+  строку.
+- **P2. Не было валидаций «день уже отмечен» и «дата в будущем/прошлом».**
+  Теперь: `reschedule move_once` отказывает, если по `from_scheduled_day`
+  есть лог completed/partial/skipped («переносить отмеченную нельзя»), и
+  запрещает цель переноса в прошлом (`to < сегодня локально`; прошедшее
+  отмечается через log-workout); `log-workout` отказывает за будущую дату
+  (`isFutureLocalDay`, сегодня включительно можно).
+- **P2. wger 429 ретраился 4 раза с фиксированными задержками как 5xx.**
+  **Фикс:** при 429 пауза = `Retry-After` (секунды или HTTP-date, cap 30с),
+  без заголовка — отдельная таблица [2с, 8с, 20с] вместо [400мс, 1.2с, 3.6с];
+  5xx/сеть — как раньше. Лог `wger-retry-wait` с `delay_ms`.
+- **Затронутые файлы:** `agent/lib/{program-store,wger}.ts`,
+  `agent/tools/training/{reschedule,log-workout}.ts`;
+  `tests/{wger,program-store}.test.ts`.
+- **Спека:** поведение в рамках PHASE-5 §5.3–5.4 (валидация scheduled_day,
+  контракт разового переноса уточнён: notes-формат «перенос с YYYY-MM-DD» —
+  часть контракта pending-строки); SPECIFICATION/PHASE-5 текстово не
+  правились — решения зафиксированы здесь.
+- **Состояние проекта:** фаза 5 завершена + ревью-правки внесены. Фаза 6 не
+  начата.
+- **Коммит:** _не коммичено._
+
+### 2026-08-15 — фаза 5 — завершена реализация тренировочной программы (wger + адаптация)
+
+- **Что:** Реализована фаза 5 целиком по `PHASE-5.md`. wger-интеграция собственными
+  tools с прямыми fetch (§6.3/§20.4 — вопрос закрыт: OpenAPI-коннекция не
+  понадобилась); построение/сохранение программы (новая `version` одной
+  транзакцией, план = строки `program_sessions`); наполнение
+  `reminder_settings.workout_times` с HITL-подтверждением (Заменить / Оставить
+  мои / Смешать); отметка выполнения (completed/skipped/partial); перенос
+  (разовый/регулярный с обязательным sync `workout_times`), облегчение,
+  пересборка; ежедневный триггер адаптации `program-check` (незалогированные
+  сессии / просроченные разовые переносы / ≥2 skipped+partial за 7 локальных
+  дней → proactive-сессия с готовым блоком фактов → агент решает и зовёт
+  `reschedule`); напоминание о тренировках фазы 4 обогащено упражнениями дня.
+- **Авто-верификация (✅):** `tsc --noEmit` чисто; `vitest run` — 298 тестов
+  зелёных (+42: wger — stripHtml/нормализация exerciseinfo с RU-приоритетом
+  переводов, fetch-mock контракты (фильтры category/equipment/language=2/
+  limit/offset в URL, кэш /language/ — один запрос на процесс,
+  таймаут-сигнал на попытку, retry 5xx с backoff на fake timers, сеть →
+  wger_unavailable, 404 → not_found без ретраев, не-JSON → parse, таксономии
+  кэшируются); program-store — dayOfWeekOf, normalizeSlots (валидация/дедуп/
+  сортировка), mergeSlots, moveSlotsDay (коллизии схлопываются; нет слотов →
+  []), scaleSets/scaleRepsText ('8-12', en-dash, '30s', 'до отказа', clamp);
+  program-check — окно 8 дней через месяц, незалогированные дни (rescheduled
+  считается отметкой), guard «до создания версии», ≥2 skipped+partial,
+  просроченный/сегодняшний pending, блок фактов и промпт (инструменты,
+  правило перевода, тон); промпт workout-reminder с планом и без).
+  `eve build` проходит; манифест подтверждает 23 tools (+`build-program`,
+  `reschedule`, `log-workout`) и 9 schedules (`program-check` cron
+  `0 5 * * *`, прежние 8 не тронуты).
+- **Не авто-верифицировано (checklist для автора; нужны docker-БД + туннель +
+  реальный бот + доступ к wger.de):** (1) `docker compose up -d postgres` +
+  `npm run db:migrate` (новых миграций нет); (2) `npm run dev` + туннель;
+  (3) в чате: «составь программу тренировок 3 раза в неделю дома» →
+  `build-program` catalog → search → показать план на русском (перевод LLM;
+  проверить, что упражнения не выдуманы — id из wger) → save → при наличии
+  своих workout_times — вопрос с кнопками → apply_times; (4) проверить в БД:
+  новая строка `workout_programs` (active=true), прежняя active=false,
+  `program_sessions` по дням, `reminder_settings.workout_times` =
+  [{day_of_week, local_time}]; (5) «сделаю в четверг» → `reschedule`
+  move_once → два лога (rescheduled+pending), workout_times не изменились;
+  «перенеси постоянно на чт» → move_weekly → program_sessions и workout_times
+  переехали; «сделай полегче» → lighten (sets/reps масштабировались);
+  (6) `log-workout` отметить сегодня (день программы) → лог; не-день
+  программы → friendly-ошибка; (7) подготовить отставание (не отмечать
+  прошлый день программы / добавить skipped+partial) → `curl -X POST
+  …/dev/schedules/program-check` → сообщение с фактами и предложением
+  адаптации в tone-пресете; повторный запуск в тот же день — пусто (dedup);
+  (8) дождаться слота workout_times → напоминание содержит упражнения дня
+  по-русски; (9) wger-деградация (отключить сеть) → friendly
+  «база упражнений недоступна», построение не валится молча; (10) эвал
+  перевода (не блокирующий DoD, §18.3): ≥30 упражнений разных групп — ≥90%
+  корректных, ≤5% критических ошибок.
+- **Затронутые файлы/артефакты (создано/изменено):**
+  - Либы: `agent/lib/wger.ts` (REST-клиент: retry/таймауты, нормализация,
+    RU-приоритет переводов, кэш таксономий/языков, `wgerErrorPayload`),
+    `agent/lib/program-store.ts` (сохранение версий в транзакции,
+    workout_times-хелперы, `saveProgramFromParams` общий для
+    build-program/rebuild, `usersWithActiveProgram`, move/lighten),
+    `agent/lib/program-check.ts` (сбор фактов + pure `analyzeProgram` +
+    промпт-билдеры).
+  - Tools: `agent/tools/training/{build-program,reschedule,log-workout}.ts`.
+  - Schedule: `agent/schedules/program-check.ts`; изменён
+    `agent/schedules/workout-reminder.ts` (блок «План на сегодня» best-effort).
+  - Прочее: `agent/lib/alert-dedup.ts` (+`programCheckKey`),
+    `agent/lib/db/schema.ts` (комментарий статусов workout_logs),
+    `agent/instructions.md` (фаза 5: возможности, таблица tools, раздел
+    «Тренировочная программа» с правилом перевода, обновлён bullet
+    workout-reminder).
+  - Тесты: `tests/{wger,program-store,program-check}.test.ts`;
+    `tests/proactive-prompts.test.ts` (+кейс плана).
+  - Конфиг/модель данных: НОВЫХ таблиц/миграций/env/зависимостей нет;
+    семантика `workout_logs.status` расширена значением `'pending'`
+    (см. «Принятые решения» п.2 и SPECIFICATION §5.5).
+- **Принятые решения и отклонения от спецификации:**
+  1. **wger: свои tools подтверждены достаточными (§20.4 закрыт).** Контракт
+     сверен с живым API (2026-08-15): список `/exercise/` отдаёт БЕЗ имён —
+     поиск идёт по `/exerciseinfo/` с фильтрами (category/equipment/language)
+     и вложениями (translations), карточка `/exerciseinfo/{id}/` — со всеми
+     переводами. RU ≈1% подтверждён: приоритет готового wger-RU (language id
+     из `/language/`, fallback 5) → EN (агент переводит на лету; правило
+     зашито в instructions.md и промпты program-check/workout-reminder).
+  2. **`workout_logs.status` += `'pending'`** (санкционировано PHASE-5 §5.4
+     «pending-семантикой», в глобал не входил): разовый перенос = лог
+     исходного дня (`rescheduled`, performed_at=now) + лог новой даты
+     (`pending`). `pending`-строка закрывается `log-workout`'ом по новой дате
+     (update, не insert). SPECIFICATION §5.5 обновлена синхронно; DDL не
+     менялся (колонка text).
+  3. **Разовый vs регулярный перенос — контракт §5.4 реализован буквально:**
+     move_once не трогает `program_sessions`/`workout_times` (регулярное
+     расписание то же); повторный перенос двигает существующую pending-строку
+     (не плодит пары). Регулярный move_weekly правит `program_sessions`
+     (sort_order за существующими строками целевого дня) И `workout_times`
+     (слоты from_dow → to_dow; слотов не было — не изобретаем). Разовое
+     напоминание в новую дату шлёт `program-check` (pending на сегодня —
+     всегда в промпте): точное время разовой даты не настраивается — cron
+     ежедневный (05:00 UTC); для family-of-2 (Москва, 08:00 локально)
+     приемлемо, при других tz пересмотреть.
+  4. **`log-workout` — upsert-семантика на дату:** повторная отметка той же
+     (user, program_version, scheduled_day) обновляет последнюю строку
+     (перезапись статуса/notes), а не плодит дубли; pending-строка закрывается
+     тем же путём. Валидация даты: день недели программы ИЛИ существующий
+     pending на эту дату (разовый перенос) — иначе friendly-ошибка.
+  5. **Подтверждение workout_times (§5.2):** build-program save всегда
+     сохраняет программу (это безопасно), а времена — только при пустых
+     текущих; при непустых возвращает `needs_confirmation` и модель спрашивает
+     `ask_question` (replace/keep/merge) → `apply_times`. Единая точка
+     применения времён — `build-program` action='apply_times' (и после
+     `reschedule` rebuild — hint в ответе инструмента).
+  6. **`program-check` срабатывает при:** незалогированные дни программы ≥1,
+     просроченные pending ≥1, или ≥2 skipped+partial за 7 локальных дней;
+     плюс отдельный триггер «разовая тренировка сегодня» (без отставания).
+     «Незалогированный» день = день недели активной версии ПОСЛЕ её создания
+     без единого лога (лог любого статуса, включая rescheduled, считается
+     отметкой — перенос учтён своей pending-строкой). Dedup
+     `(user, program-check, local_date)` in-memory (паттерн §9), ключ после
+     успешной доставки.
+  7. **workout-reminder обогащён планом дня** (сверх таблицы §3 PHASE-5,
+     смыкает DoD «напоминания по программе работают»): упражнения
+     `program_sessions` этого дня недели попадают в промпт (EN + sets/reps,
+     модель переводит); сбор best-effort — сбой чтения не блокирует
+     напоминание (ветка «не выдумывай» сохранена для юзеров без программы).
+  8. **Эвал перевода (§18.3) не блокирующий** — checklist п.10 выше;
+     scripts/evals не заводился (ручная выборка достаточна для v1).
+- **Спека:** Фаза реализована по `PHASE-5.md` и `SPECIFICATION.md` §5.5/§5.6/
+  §6.3/§8/§9/§11.4/§16/§18.3/§20.4. Изменение модели: §5.5 `workout_logs.status`
+  += 'pending' (синхронно внесено в SPECIFICATION.md); §20.4 помечен решённым.
+  Уточнения (выше): п.1 контракт wger, п.2 pending, п.3 механика переносов,
+  п.4 upsert log-workout, п.5 apply_times, п.6 условия program-check, п.7
+  обогащение напоминания.
+- **Состояние проекта:** фаза 5 завершена и авто-верифицирована. Фаза 6 не
+  начата.
+- **Коммит:** _не коммичено._
 
 ### 2026-08-15 — фаза 4 — правки по ревью (2 замечания P1, 4 замечания P2)
 

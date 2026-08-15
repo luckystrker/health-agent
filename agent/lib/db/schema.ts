@@ -247,7 +247,9 @@ export const workoutLogs = pgTable("workout_logs", {
   programVersion: integer("program_version"),
   scheduledDay: date("scheduled_day", { mode: "date" }),
   performedAt: timestamp("performed_at", { withTimezone: true, mode: "date" }),
-  status: text("status").notNull(), // 'completed' | 'skipped' | 'rescheduled' | 'partial'
+  // 'completed' | 'skipped' | 'partial' — log-workout; 'rescheduled' + 'pending' —
+  // только reschedule (pending = разовый перенос на будущую дату, PHASE-5 §5.4).
+  status: text("status").notNull(),
   notes: text("notes"),
   source: text("source").notNull().default("manual"),
 });
