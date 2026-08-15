@@ -3,15 +3,34 @@
  * Динамический контекст пользователя (§4) — на `turn.started`.
  *
  * Подставляет краткое досье пользователя в системный промпт: профиль, цель,
- * timezone, уровень активности. Тренды/агрегаты добавятся в фазах 1–3.
+ * timezone, уровень активности + тренды за неделю (фаза 3: сон/шаги/вес/
+ * калории/тренировки из `lib/weekly-digest`).
  *
  * Применяется ТОЛЬКО к онборженным пользователям (не онборженных ведёт
- * `onboarding-guard`).
+ * `onboarding-guard`). Не дублирует tone-инструкцию (она — в `tone.ts`).
+ *
+ * Digest — тяжеловат для каждого turn'а (7–14 дней чтения), поэтому кэшируется
+ * в памяти на 10 минут per-user (семья из нескольких человек; паттерн §9
+ * in-memory). Сбой трендов НЕ ломает интерактивный чат — try/catch.
  */
 import { defineDynamic, defineInstructions } from "eve/instructions";
 
 import { getChatId } from "../lib/tenant";
 import { loadUserOverview } from "../lib/user-status";
+import { buildDigestTrendLines, buildWeeklyDigest, type WeekDigest } from "../lib/weekly-digest";
+
+/** TTL кэша digest (мс): тренды в системном промпте могут отставать ≤10 мин. */
+const DIGEST_TTL_MS = 10 * 60_000;
+
+const digestCache = new Map<string, { expiresAt: number; digest: WeekDigest }>();
+
+async function digestCached(userId: string): Promise<WeekDigest> {
+  const cached = digestCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.digest;
+  const digest = await buildWeeklyDigest(userId);
+  digestCache.set(userId, { expiresAt: Date.now() + DIGEST_TTL_MS, digest });
+  return digest;
+}
 
 export default defineDynamic({
   events: {
@@ -55,6 +74,18 @@ export default defineDynamic({
           .map((t) => String(t).slice(0, 5))
           .join(" / ");
         if (times) lines.push(`- напоминания: ${times} (локальное время)`);
+      }
+
+      // Тренды недели (фаза 3) — необязательная часть: сбой не ломает turn.
+      try {
+        const trends = buildDigestTrendLines(await digestCached(o.userId));
+        if (trends.length > 0) {
+          lines.push("");
+          lines.push("## Тренды за последние 7 завершённых дней");
+          lines.push(...trends);
+        }
+      } catch {
+        // тихо: тренды — обогащение, не критичный контекст
       }
 
       return defineInstructions({ markdown: lines.join("\n") });

@@ -84,6 +84,18 @@ export async function getUserTimezone(userId: string): Promise<string> {
 }
 
 /**
+ * Пометить юзера заблокировавшим бота (Telegram 403; §16, PHASE-3 §6).
+ * `blocked=true` — schedules пропускают юзера в будущих рассылках (§9).
+ * idempotent: повторный вызов не меняет состояние.
+ */
+export async function markBlockedByChatId(chatId: string): Promise<void> {
+  await db
+    .update(users)
+    .set({ blocked: true })
+    .where(eq(users.telegramChatId, BigInt(chatId)));
+}
+
+/**
  * Создаёт user-row для chat_id, если её ещё нет (первый `/start` от allowlist-юзера).
  * Дефолтный tz — Europe/Moscow (§10 шаг 3; уточняется на онбординге).
  *

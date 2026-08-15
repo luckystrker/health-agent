@@ -8,7 +8,7 @@
 > (фаза, задача, багфикс, изменение модели/env/зависимостей, отклонение от спеки) — должна
 > быть отражена здесь. Журнал правок — append-only, новые записи сверху.
 
-Дата последнего обновления: **2026-08-14**.
+Дата последнего обновления: **2026-08-15**.
 
 ---
 
@@ -22,7 +22,7 @@
 | **0** | Скелет eve: Telegram, БД, schema, онбординг | ✅ завершена | [`PHASE-0.md`](./phases/PHASE-0.md) | Telegram-канал + allowlist, schema всех 13 таблиц + миграции (drizzle), онбординг (model-driven, 10 шагов), `requireUser`/`userAuthFor`, tone-пресеты, 5 settings-инструментов + complete-onboarding/get-my-status, unit-тесты (22 зелёных). **Модель:** `opencode-go/deepseek-v4-flash` (128k context, escape-hatch). Авто-верифицировано: typecheck, `eve build`, docker compose + `drizzle-kit migrate` (13 таблиц + pgcrypto), vitest. **Не авто-верифицировано** (нужны реальные креды/туннель): Telegram end-to-end онбординг — см. checklist в журнале. |
 | **1** | Phone-hub ingestion + агрегаты | ✅ завершена | [`PHASE-1.md`](./phases/PHASE-1.md) | Custom channel `phone-hub` (`POST /eve/v1/phone-hub`, Bearer-токен, нормализация, дедуп, запись в `raw_samples`); schedule `aggregate-raw` (raw→daily, cutoff-snapshot, §12.3); libs `phone-hub-token`/`normalize`/`dedup`/`aggregates`/`log`/`daily-read`; tools `get-sleep`/`get-activity`/`get-workouts`/`add-manual-data`/`rotate-phone-hub-token`; dev/mock-forwarder. **Миграция 0002**: unique-индекс `raw_samples (user_id, metric, recorded_at)` (фикс гонки/двойного счёта). Unit-тесты (+52, всего 74 зелёных). Авто-верифицировано: typecheck, `eve build`, manifest (phone-hub route + schedule `0 3 * * *` + 12 tools), vitest. **Не авто-верифицировано** (нужны docker-БД + туннель): webhook end-to-end + apply миграций 0000–0002 — checklist ниже. |
 | **2** | FatSecret (OAuth) + food_entries + калории | ✅ завершена | [`PHASE-2.md`](./phases/PHASE-2.md) | Своя FatSecret-интеграция (не MCP): OAuth 2.0 client-credentials (app-токен в памяти, refresh за 1ч) + OAuth 1.0a 3-legged PIN-flow (`connect/complete-fatsecret`, HITL `ask_question`); `log-food` (search→details→log→копия в `food_entries`; manual/barcode_off), `lookup-barcode` (FatSecret→Open Food Facts), `get-food`/`get-calorie-balance`/`get-target-calories`; `lib/calories.ts` (Mifflin-St Jeor, фактор из 14 дней, cold-start fallback, пол-минимумы); schedule `sync-fatsecret-diary` (get_month+get → upsert по external_id + удаление исчезнувших). Подпись OAuth 1.0a — ручной HMAC-SHA1 (без зависимости), сверена с RFC 5849 + эрратой 2550. Unit-тесты (+63, всего 137). Ревью-правки P1: таймаут 15с на все FatSecret-fetch'и (каждая retry-попытка), классификация ошибок app-токена (fs_auth_failed ≠ fs_not_configured; сеть → fs_unavailable). Авто-верифицировано: typecheck, `eve build`, manifest (19 tools + schedule `0 4 * * *`), vitest. **Не авто-верифицировано** (нужны реальные FatSecret-креды + туннель + docker-БД): end-to-end PIN-flow, запись в дневник, sync — см. checklist в журнале. ⚠️ Риск: region/language и find_id_for_barcode в доках v1 помечены Premier — на free-тарифе возможна деградация до US-базы/OFF-фолбэка (не ошибка, обработано). |
-| **3** | Недельный отчёт + графики + tone-пресеты | 🔲 не начата | [`PHASE-3.md`](./phases/PHASE-3.md) | Зависит от фаз 1–2 (нужны агрегаты + питание). |
+| **3** | Недельный отчёт + графики + tone-пресеты | ✅ завершена | [`PHASE-3.md`](./phases/PHASE-3.md) | Schedule `weekly-report` (cron `0 10 * * 1`): dispatcher по §9 (`userAuthFor` → `to(telegram).send`) + digest-промпт; `lib/weekly-digest` (единый источник трендов: сон/шаги/вес/калории/тренировки за 7 завершённых локальных дней); tool `render-chart` (сон/вес/шаги/калории → PNG локально → прямой `sendPhoto`); `lib/chart-config` (pure-конфиги) + `lib/telegram-send` (multipart, 429-backoff с retry_after, 403→blocked); 403-детект в канале (`message.completed` override → `users.blocked`); тренды в `user-context.ts` (TTL-кэш 10 мин). Зависимости: `chartjs-node-canvas@^5` + `chart.js@^4.5` (+нативный `canvas@3`). Unit-тесты (+49, всего 186). Авто-верифицировано: typecheck, `eve build` (20 tools + schedule в манифесте; PNG-рендер из собранного бандла), vitest. **Не авто-верифицировано** (нужны туннель + docker-БД + реальный бот + Linux VPS) — см. checklist в журнале. |
 | **4** | Проактивные сообщения (dispatcher, алерты, workout) | 🔲 не начата | [`PHASE-4.md`](./phases/PHASE-4.md) | Зависит от фаз 0–3. |
 | **5** | Тренировочная программа (wger + адаптация) | 🔲 не начата | [`PHASE-5.md`](./phases/PHASE-5.md) | Зависит от фаз **0 и 4** (фаза 4 — `workout-reminder` потребляет `reminder_settings.workout_times`); wger REST без ключа. |
 | **6** | Полировка: edge-cases, удаление данных, мониторинг | 🔲 не начата | [`PHASE-6.md`](./phases/PHASE-6.md) | Зависит от фаз 0–5. |
@@ -73,6 +73,112 @@
 > - Спека: <ссылка на раздел SPECIFICATION.md или PHASE-N.md, если менялась>
 > - Коммит: <hash или "не коммичено">
 > ```
+
+### 2026-08-15 — фаза 3 — завершена реализация недельного отчёта + графиков + tone в деле
+
+- **Что:** Реализована фаза 3 целиком по `PHASE-3.md`. Schedule `weekly-report`
+  (cron `0 10 * * 1` UTC) с dispatcher-паттерном §9 (loop по онборженным
+  не-blocked юзерам → `userAuthFor` → `to(telegram,{chatId}).send(prompt,
+  {auth})`, try/catch per-user); tool `render-chart` (сон/вес/шаги/калории →
+  PNG локально через `chartjs-node-canvas` → отправка юзеру прямым
+  multipart `sendPhoto`); динамическая инструкция `user-context.ts` дополнена
+  трендами недели; 403-детект → `users.blocked` (канал + sendPhoto);
+  429-обработка с экспоненциальным backoff и respect `retry_after`.
+- **Авто-верификация (✅):** `tsc --noEmit` чисто; `vitest run` — 186 тестов
+  зелёных (+49: завершённые локальные дни с tz-границами, суммаризаторы
+  digest — средние только по дням с данными, тренд сна vs предыдущая неделя,
+  порог N=4, trend-строки и digest-блок промпта, промпт отчёта; fetch-mock
+  контракты sendPhoto — multipart-поля/Blob, 429 c retry_after и backoff
+  1с/2с/4с + cap 15с, 403 без ретраев, сеть→network, не-JSON 200; маппинг
+  ChartSpec по kind + weight-guard <2 точек + легенда только при 2 датасетах;
+  интеграционный PNG-рендер реальных спек через canvas); `eve build` проходит;
+  манифест подтверждает 20 tools (+`report-render-chart`) и 3 schedules
+  (`weekly-report` cron `0 10 * * 1`); PNG-рендер проверен ИЗ СОБРАННОГО
+  бандла `.output` (нативный `canvas` резолвится из node_modules в рантайме).
+- **Не авто-верифицировано (checklist для автора; нужны docker-БД + туннель +
+  реальный бот + Linux VPS):** (1) `docker compose up -d postgres` +
+  `npm run db:migrate` (новых миграций нет); (2) `npm run dev` + туннель +
+  `TELEGRAM_BOT_TOKEN`; (3) наполнить данные (mock-forwarder фазы 1, еда
+  фазы 2, пара взвешиваний через update-profile); (4)
+  `curl -X POST http://localhost:2000/eve/v1/dev/schedules/weekly-report`
+  → в Telegram: текст отчёта в tone-пресете юзера (риск §8 «tone в
+  scheduled-сессии» — проверить именно здесь) + 1–2 PNG (сон; вес при ≥2
+  взвешиваниях); (5) в чате «покажи график калорий» → `render-chart`
+  интерактивно; (6) заблокировать бота → повторный запуск weekly-report:
+  `users.blocked=true` в БД, лог `user-blocked-403`, юзер пропускается в
+  следующих запусках; (7) на VPS: `npm ci && npm run build && npm start` под
+  systemd — рендер canvas под Linux без X-сервера (риск §8), рестарт-стойкость.
+- **Затронутые файлы/артефакты (создано/изменено):**
+  - Либы: `agent/lib/weekly-digest.ts` (digest недели: pure-суммаризаторы +
+    DB-обёртка + trend-строки + prompt-блок), `agent/lib/chart-config.ts`
+    (pure ChartSpec-конфиги), `agent/lib/telegram-send.ts` (`sendPhotoBytes`
+    + классификация ошибок + `telegramHttpStatusFromError`),
+    `agent/lib/tenant.ts` (+`markBlockedByChatId`).
+  - Tool: `agent/tools/report/render-chart.ts` (ленивый dynamic import
+    canvas, данные читает сам, friendly-фолбэки §16).
+  - Schedule: `agent/schedules/weekly-report.ts` (dispatcher + pure
+    `buildWeeklyReportPrompt`).
+  - Канал: `agent/channels/telegram.ts` (override `message.completed`:
+    дефолтная доставка + 403→blocked).
+  - Инструкции: `agent/instructions.md` (фаза 3, `render-chart` в таблице,
+    раздел «Недельный отчёт»), `agent/instructions/user-context.ts` (тренды
+    недели с in-memory TTL-кэшем 10 мин; сбой трендов не ломает turn).
+  - Тесты: `tests/{weekly-digest,telegram-send,chart-config,
+    weekly-report-prompt,chart-render}.test.ts`.
+  - Конфиг: `package.json` (+`chartjs-node-canvas@^5.0.0`, +`chart.js@^4.5.1`;
+    транзитивно нативный `canvas@^3`). Новых env-переменных и миграций НЕТ.
+- **Принятые решения и отклонения от спецификации:**
+  1. **`sendPhoto` — прямой multipart-fetch к Bot API** (`lib/telegram-send.ts`),
+     не через eve-канал. Причины (сверено с `node_modules/eve/dist`):
+     `ToolContext` не экспонирует telegram-хендл; исходящие вложения в
+     message-stream не поддерживаются; JSON-хелпер eve (`callTelegramApi`)
+     не принимает бинарные тела. Node 24 имеет нативные `FormData`/`Blob` —
+     зависимостей не добавлено. PHASE-3 §5.3 «PNG → sendPhoto» — реализовано
+     буквально, механизм уточнён.
+  2. **Digest-driven промпт.** Schedule собирает дайджест недели кодом
+     (`lib/weekly-digest.ts` — единый источник для промпта, user-context и
+     render-chart) и встраивает в промпт proactive-сессии; модель —
+     анализ/выводы/тон (§11.1 «Выводы и советы — анализ LLM»), числа НЕ
+     транскрибируются через LLM (антигаллюцинационный барьер). `get-*` tools
+     остаются доступны в сессии для уточнения (`requireUser` внутри
+     синтезированного auth работает — риск §8 dispatcher закрыт архитектурно:
+     `turn.started` динамических инструкций получает `attributes.chat_id`).
+  3. **403-детект текстовой доставки — override `message.completed` в
+     канале.** eve бросает `Error("Telegram sendMessage failed with HTTP
+     403.")` — статус достаётся парсером `telegramHttpStatusFromError`
+     (единственная точка, полагающаяся на формат текста ошибки). Override
+     повторяет дефолтную доставку (skip tool-calls/пустых; post текста),
+     при 403 помечает `users.blocked` + info-лог + гасит ошибку (доставлять
+     некому); прочие ошибки — пробрасываются как в дефолте. Фаза 4
+     переиспользует флаг во всех schedules.
+  4. **429: минимум по спеке — только для sendPhoto** (retry ≤4,
+     `parameters.retry_after` приоритетнее backoff 1с/2с/4с, cap 15с).
+     Доставка текста через eve (`telegram.post`) ретраев не имеет — при
+     family-of-2 (2–3 сообщения раз в неделю) rate-limit недостижим; при
+     масштабировании усилить в dispatcher фазы 4.
+  5. **График веса — окно 30 дней** (не 7): недельного окна почти всегда <
+     2 взвешиваний (guard `no_data`), тренд веса на месячном окне осмыслен.
+     Прочие виды — 7 завершённых дней по умолчанию. Дни без записей еды на
+     calories-графике — пропуск (null), не 0 («не записывал» ≠ «0 ккал»).
+  6. **`ChartSpec` — собственный чистый тип** (без импорта chart.js в
+     lib): маппинг данных → датасеты unit-тестируется без canvas; cast к
+     `ChartConfiguration` — одна точка в tool, совместимость валидируется
+     интеграционным тестом рендера. Canvas грузится ленивым dynamic import
+     (нет side effects при `eve build`).
+  7. **Завершённые дни** — новый helper `completedDaysList` (вчера и старше
+     по `users.timezone`); существующие `get-*` tools (окно «включая сегодня»)
+     не менялись.
+  8. **TTL-кэш digest в `user-context.ts`** (10 мин, in-memory, паттерн §9):
+     `turn.started` не делает полный digest-запрос на каждый turn; сбой
+     трендов тихо пропускается (интерактивный чат важнее).
+- **Спека:** Фаза реализована по `PHASE-3.md` и `SPECIFICATION.md` §4/§8/§9/
+  §11.1/§11.3/§13/§16/§18.3. Отклонений от архитектуры нет; уточнения:
+  механизм sendPhoto (п.1), digest-промпт (п.2), парсинг текста ошибки eve
+  для 403 (п.3), окно weight-графика (п.5). SPECIFICATION.md текстово не
+  правился — решения зафиксированы здесь.
+- **Состояние проекта:** фаза 3 завершена и авто-верифицирована. Фазы 4–6
+  не начаты.
+- **Коммит:** _не коммичено._
 
 ### 2026-08-14 — фаза 2 — правки по ревью (2 замечания P1)
 
