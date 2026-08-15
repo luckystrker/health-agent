@@ -23,7 +23,7 @@
 | **1** | Phone-hub ingestion + агрегаты | ✅ завершена | [`PHASE-1.md`](./phases/PHASE-1.md) | Custom channel `phone-hub` (`POST /eve/v1/phone-hub`, Bearer-токен, нормализация, дедуп, запись в `raw_samples`); schedule `aggregate-raw` (raw→daily, cutoff-snapshot, §12.3); libs `phone-hub-token`/`normalize`/`dedup`/`aggregates`/`log`/`daily-read`; tools `get-sleep`/`get-activity`/`get-workouts`/`add-manual-data`/`rotate-phone-hub-token`; dev/mock-forwarder. **Миграция 0002**: unique-индекс `raw_samples (user_id, metric, recorded_at)` (фикс гонки/двойного счёта). Unit-тесты (+52, всего 74 зелёных). Авто-верифицировано: typecheck, `eve build`, manifest (phone-hub route + schedule `0 3 * * *` + 12 tools), vitest. **Не авто-верифицировано** (нужны docker-БД + туннель): webhook end-to-end + apply миграций 0000–0002 — checklist ниже. |
 | **2** | FatSecret (OAuth) + food_entries + калории | ✅ завершена | [`PHASE-2.md`](./phases/PHASE-2.md) | Своя FatSecret-интеграция (не MCP): OAuth 2.0 client-credentials (app-токен в памяти, refresh за 1ч) + OAuth 1.0a 3-legged PIN-flow (`connect/complete-fatsecret`, HITL `ask_question`); `log-food` (search→details→log→копия в `food_entries`; manual/barcode_off), `lookup-barcode` (FatSecret→Open Food Facts), `get-food`/`get-calorie-balance`/`get-target-calories`; `lib/calories.ts` (Mifflin-St Jeor, фактор из 14 дней, cold-start fallback, пол-минимумы); schedule `sync-fatsecret-diary` (get_month+get → upsert по external_id + удаление исчезнувших). Подпись OAuth 1.0a — ручной HMAC-SHA1 (без зависимости), сверена с RFC 5849 + эрратой 2550. Unit-тесты (+63, всего 137). Ревью-правки P1: таймаут 15с на все FatSecret-fetch'и (каждая retry-попытка), классификация ошибок app-токена (fs_auth_failed ≠ fs_not_configured; сеть → fs_unavailable). Авто-верифицировано: typecheck, `eve build`, manifest (19 tools + schedule `0 4 * * *`), vitest. **Не авто-верифицировано** (нужны реальные FatSecret-креды + туннель + docker-БД): end-to-end PIN-flow, запись в дневник, sync — см. checklist в журнале. ⚠️ Риск: region/language и find_id_for_barcode в доках v1 помечены Premier — на free-тарифе возможна деградация до US-базы/OFF-фолбэка (не ошибка, обработано). |
 | **3** | Недельный отчёт + графики + tone-пресеты | ✅ завершена | [`PHASE-3.md`](./phases/PHASE-3.md) | Schedule `weekly-report` (cron `0 10 * * 1`): dispatcher по §9 (`userAuthFor` → `to(telegram).send`) + digest-промпт; `lib/weekly-digest` (единый источник трендов: сон/шаги/вес/калории/тренировки за 7 завершённых локальных дней); tool `render-chart` (сон/вес/шаги/калории → PNG локально → прямой `sendPhoto`); `lib/chart-config` (pure-конфиги) + `lib/telegram-send` (multipart, 429-backoff с retry_after, 403→blocked); 403-детект в канале (`message.completed` override → `users.blocked`); тренды в `user-context.ts` (TTL-кэш 10 мин). Зависимости: `chartjs-node-canvas@^5` + `chart.js@^4.5` (+нативный `canvas@3`). Unit-тесты (+49, всего 186). Авто-верифицировано: typecheck, `eve build` (20 tools + schedule в манифесте; PNG-рендер из собранного бандла), vitest. **Не авто-верифицировано** (нужны туннель + docker-БД + реальный бот + Linux VPS) — см. checklist в журнале. |
-| **4** | Проактивные сообщения (dispatcher, алерты, workout) | 🔲 не начата | [`PHASE-4.md`](./phases/PHASE-4.md) | Зависит от фаз 0–3. |
+| **4** | Проактивные сообщения (dispatcher, алерты, workout) | ✅ завершена | [`PHASE-4.md`](./phases/PHASE-4.md) | Schedules `daily-morning/midday/evening` + `workout-reminder` (все `0 * * * *`, симметричное fuzzy-окно ±30 мин в локальном времени, круговое сравнение — слоты через полночь; dedup in-memory `(user, kind/type, local_date)`); `anomaly-check` (`*/30 * * * *`) — 4 порога (сон <5ч / отбой >02:00; калории >125% цели; шаги <50% 7-дневной медианы после 18:00 при ≥3 днях; вес ±2.5%/±1 кг, ≥3 измерений) с rate-limit 1 алерт/тип/юзер×день; текущий день — из `raw_samples`/`food_entries` (агрегата текущего дня нет, §12.3), цель — `lib/calories`; `lib/proactive-send` (429-backoff), `lib/today-vitals` (снимок дня + факты утра). Unit-тесты (+63, всего 249). Авто-верифицировано: typecheck, `eve build`, manifest (8 schedules + 20 tools), vitest. **Не авто-верифицировано** (нужны docker-БД + туннель + реальный бот) — см. checklist в журнале. |
 | **5** | Тренировочная программа (wger + адаптация) | 🔲 не начата | [`PHASE-5.md`](./phases/PHASE-5.md) | Зависит от фаз **0 и 4** (фаза 4 — `workout-reminder` потребляет `reminder_settings.workout_times`); wger REST без ключа. |
 | **6** | Полировка: edge-cases, удаление данных, мониторинг | 🔲 не начата | [`PHASE-6.md`](./phases/PHASE-6.md) | Зависит от фаз 0–5. |
 | **7** (опц.) | Мобильный мост для CMF by Nothing | 🔲 отложена | [`PHASE-7.md`](./phases/PHASE-7.md) | За рамками первого релиза; активируется по запросу. |
@@ -73,6 +73,155 @@
 > - Спека: <ссылка на раздел SPECIFICATION.md или PHASE-N.md, если менялась>
 > - Коммит: <hash или "не коммичено">
 > ```
+
+### 2026-08-15 — фаза 4 — правки по ревью (2 замечания P1, 4 замечания P2)
+
+- **Что:** По итогам код-ревью фазы 4 исправлены 6 замечаний. Авто-верификация
+  после правок: `tsc --noEmit` чисто; `vitest run` — 256 тестов (+7: секунды
+  >59 в parseHHMMToMinutes/normalizeHHMM, deriveWeightInput — свежесть по
+  локальному дню (утро/вечер/позавчера), guard базиса (3 строк total → null),
+  интеграция derive→check, pruneStaleSentKeys с запасом на локальные даты);
+  `eve build` проходит; манифест: 8 schedules + 20 tools (без изменений).
+- **P1-1. Свежесть взвешивания — по локальному дню (§12.1), не по абсолютным
+  24ч.** `isFresh = measuredAt >= now − 24h` расходился с обещанным
+  «сегодня/вчера»: вчерашнее утреннее взвешивание при проверке в 09:30 (25+ч
+  старины) отбрасывалось → алерт о скачке веса молча не срабатывал весь день.
+  **Фикс:** логика вынесена в pure `deriveWeightInput(rows, tz, today)`
+  (`lib/anomalies.ts`): свежесть = `localDay(measuredAt, tz) ∈ {today,
+  previousDay(today)}`; unit-тестируется (добавлен экспорт `previousDay` в
+  `lib/time.ts`, приватная копия в today-vitals убрана).
+- **P1-2. Guard «минимум 3 измерений» — на БАЗИСЕ медианы (§11.5: «медиана
+  последних 7 измерений (минимум 3)»).** Было: `rows.length >= 3` включал
+  свежее измерение → при ровно 3 строках медиана считалась из 2 значений.
+  **Фикс:** `deriveWeightInput` требует `slice(1).length >=
+  WEIGHT_MIN_MEASUREMENTS` (итого ≥4 строк); докстринг константы уточнён.
+- **P2-3. `buildMorningFacts` — лёгкий путь.** Вызывал `buildTodayVitals`
+  (еда/шаги/активность/цель + расчёт калорий), используя только `.sleep`.
+  **Фикс:** выделен `readLastNightSleep` (один readPeriod по ["sleep"]);
+  утренний факт-сбор больше не считает калории.
+- **P2-4. Секунды в слотах:** `"08:00:99"` парсился как 480 (невалидные
+  секунды игнорировались). **Фикс:** общий `parseTimeParts` с проверкой
+  hh≤23/mm≤59/ss≤59 в `parseHHMMToMinutes` и `normalizeHHMM`.
+- **P2-5. Прун dedup-ключей — запас на локальные даты.** Cutoff считался от
+  UTC-даты, а ключи датированы локальными датами юзеров (могут опережать UTC
+  на сутки) → свежий ключ мог вычиститься около полуночи. **Фикс:**
+  `pruneStaleSentKeys(now)` — cutoff = UTC − (keep 2 + запас 1) суток;
+  авто-прун из `markKeySent` ходит через него.
+- **P2-6. Дублирование форматирования часов:** локальный `hoursStr` в
+  anomalies.ts и инлайн-выражение в daily-morning.ts заменены на
+  `minutesToHoursStr` из `lib/weekly-digest.ts` (та же формула).
+- **Затронутые файлы:** `agent/lib/{time,anomalies,today-vitals,fuzzy-window,
+  alert-dedup}.ts`, `agent/schedules/daily-morning.ts`;
+  `tests/{fuzzy-window,anomalies,alert-dedup}.test.ts`.
+- **Спека:** поведение приведено к PHASE-4 §5.4 / SPECIFICATION §11.5/§12.1
+  («сегодня/вчера», «медиана (минимум 3)»); уточнений спеки не требуется.
+- **Состояние проекта:** фаза 4 завершена + ревью-правки внесены. Фазы 5–6
+  не начаты.
+- **Коммит:** _не коммичено._
+
+### 2026-08-15 — фаза 4 — завершена реализация проактивных сообщений (напоминалки, workout, anomaly-check)
+
+- **Что:** Реализована фаза 4 целиком по `PHASE-4.md`. Пять новых schedules:
+  `daily-morning`/`daily-midday`/`daily-evening` (cron `0 * * * *` — fuzzy-сверка
+  слота ±30 мин в ЛОКАЛЬНОМ времени юзера при каждом тике; почему почасовой, а не
+  разовый — §9), `workout-reminder` (`0 * * * *` — сверка `workout_times`
+  `[{day_of_week: 0=вс…6=сб, local_time}]` с локальным днём/временем),
+  `anomaly-check` (`*/30 * * * *` — детектор аномалий §11.5). Все ходят от
+  appAuth; per-user сообщения — dispatcher §9 (`userAuthFor` →
+  `to(telegram,{chatId}).send`) с try/catch per-user (§16). Dedup/rate-limit —
+  in-memory `(user, kind/type, local_date)`; ключ помечается ПОСЛЕ успешной
+  доставки (сбой доставки не съедает напоминалку — следующий тик повторит).
+- **Авто-верификация (✅):** `tsc --noEmit` чисто; `vitest run` — 249 тестов
+  зелёных (+63: fuzzy-окно — парсинг HH:MM(:SS), локальные минуты/день недели,
+  круговое сравнение через полночь, DoD-кейс «слот 18:15 на тике 18:00»,
+  DST spring-forward/fall-back America/New_York, несуществующий слот 02:30;
+  dedup-ключи/подавление/прун; anomalies — каждый порог ± и guard'ы (строгие
+  неравенства, 18:00-гейт, ≥3 дней/измерений, день окончен, «нет данных»),
+  detectAnomalies-шторм и пустой ввод; pickDueDaily/pickDueWorkout — окна,
+  dedup, битые слоты, разные tz, два слота в день → одно напоминание;
+  промпты всех 5 сессий). `eve build` проходит; манифест подтверждает 8
+  schedules (`anomaly-check` `*/30 * * * *`, 4 почасовых, прежние 3 не тронуты)
+  и 20 tools (новых tools нет — фаза чисто проактивная).
+- **Не авто-верифицировано (checklist для автора; нужны docker-БД + туннель +
+  реальный бот):** (1) `docker compose up -d postgres` + `npm run db:migrate`
+  (новых миграций нет); (2) `npm run dev` + туннель; (3) настроить слоты
+  (`set-reminders`: morning/midday/evening + `workout_times` на сегодня через
+  ~5–50 мин от текущего времени); (4) дождаться ближайшего тика `:00` (или
+  `curl -X POST …/dev/schedules/daily-morning` в окно слота) → в Telegram:
+  напоминание в tone-пресете; повторный вызов в ту же локальную дату — пусто
+  (dedup); (5) `dev/schedules/workout-reminder` в окно workout-слота →
+  напоминание о тренировке; (6) anomaly-check: подготовить данные под порог
+  (напр. `log-food` > target×1.25 за сегодня, или `add-manual-data` сон <5ч
+  прошлой ночью) → `curl …/dev/schedules/anomaly-check` → алерт с фактами;
+  повторный запуск в тот же день — пусто (rate-limit); (7) проверить, что
+  «нет данных» не алертит и не спамит; (8) риск §8 PHASE-3 «tone в
+  scheduled-сессии» — проверить тон именно напоминалок/алертов; (9) на VPS:
+  почасовые тики под systemd не накладываются (4 schedules в минуту 0 —
+  Nitro cron секвенционен в одном процессе, family-of-2 — ок).
+- **Затронутые файлы/артефакты (создано/изменено):**
+  - Либы: `agent/lib/fuzzy-window.ts` (парсинг HH:MM(:SS), локальные
+    минуты/день недели, круговое fuzzy-окно ±30), `agent/lib/alert-dedup.ts`
+    (in-memory dedup + прун по дате в ключе), `agent/lib/proactive-send.ts`
+    (`sendProactiveWithRetry` — 429 → backoff 1с/2с, ≤3 попыток; 403 не
+    ретраится — канал сам ставит `users.blocked`), `agent/lib/today-vitals.ts`
+    (снимок текущего дня: `readPeriod` aggregate→raw, `food_entries`,
+    `lib/calories`; + факты утра «ужин записан?/взвешивался?»),
+    `agent/lib/anomalies.ts` (пороги-константы, pure-проверки,
+    `collectAnomalyInputs`, `detectAnomalies`, `anomaliesPromptBlock`),
+    `agent/lib/daily-reminders.ts` (запрос users⋈reminder_settings для
+    онборженных не-blocked + pure `pickDueDaily`/`pickDueWorkout`).
+  - Schedules: `agent/schedules/{daily-morning,daily-midday,daily-evening,
+    workout-reminder,anomaly-check}.ts` (каждый — pure prompt-билдер +
+    dispatcher + изоляция per-user + логи §15).
+  - Инструкции: `agent/instructions.md` (раздел «Текущие возможности (фаза 4)»
+    + новый раздел «Проактивные сообщения (фаза 4)»: данные уже в промпте,
+    без вопросов, тон, вес — информационно).
+  - Тесты: `tests/{fuzzy-window,alert-dedup,anomalies,daily-reminders,
+    proactive-prompts}.test.ts`.
+  - Конфиг/модель данных: БЕЗ изменений (новых таблиц/миграций/env/зависимостей
+    нет; `reminder_settings`, `users.blocked` из фазы 0 наполняются).
+- **Принятые решения и отклонения от спецификации:**
+  1. **Новые lib-файлы сверх таблицы §3 PHASE-4** (`fuzzy-window`, `alert-dedup`,
+     `proactive-send`, `today-vitals`, `daily-reminders`) — по прецеденту фаз 1–2
+     (вынос чистой логики из schedules для тестируемости); состав артефактов
+     фазы не меняет, `anomalies.ts` из спеки — на месте.
+  2. **Dedup-ключ помечается после успешной доставки**, а не при выборе
+     (уточнение §5.1 п.3): сбой доставки/БД → напоминалка повторится на
+     следующем тике того же дня (лучше дубля-после-рестарта, чем пропуска —
+     в духе признанного компромисса §8).
+  3. **«Поздний отбой» квантифицирован** (спека давала только `> "02:00"`):
+     поздним считается bedtime в интервале (02:00, 12:00) локального времени —
+     вечерний отбой (20:00–23:59) и «до двух» (00:00–02:00) не алертим,
+     дневные аномалии (12:00+) не алертим (выбросы/дневной сон, не «поздно
+     лёг»). Строгое `>` — 02:00 ровно не алертит.
+  4. **Morning-напоминание обогащено фактом** (в рамках «внести ужин/
+     взвеситься», §9): если вчерашний ужин записан и взвешивание есть — модель
+     шлёт короткое «доброе утро» (+сон) вместо бессмысленного напоминания;
+     факты собирает `buildMorningFacts` (еда ≥17:00 вчера, `weight_log` с
+     начала вчерашнего дня).
+  5. **Аномалии склеиваются в одно сообщение** (все свежие типы одним
+     алертом); rate-limit остаётся per-type — на следующий день или после
+     рестарта тип, отправленный сегодня, не повторится в эту дату.
+  6. **Сон за прошлую ночь** читается через `readPeriod([today], ["sleep"])`
+     (prefers `daily_aggregates` → raw on-the-fly) — безопасно: ingestion
+     гарантирует валидные `bed_at`/`wake_at` (normalize.ts), незавершённых
+     сессий в `raw_samples` не бывает.
+  7. **Edge (принят, соответствует спеке):** слот в пределах ±30 мин от
+     полуночи в tz со сдвигом :30 может сработать дважды (окно пересекает
+     полночь, dedup-ключи — разные локальные даты). Для :00-offset tz (все
+     текущие юзеры) дубль невозможен: окно 61 мин содержит ровно один тик :00,
+     либо два тика одной даты подавляются dedup.
+  8. **Инструкции модели:** все proactive-сессии фазы 4 получают готовый блок
+     данных в промпте (digest-подход фазы 3 — числа не транскрибируются через
+     LLM); `get-*` tools в них не требуются.
+- **Спека:** Фаза реализована по `PHASE-4.md` и `SPECIFICATION.md` §5.6/§8/§9/
+  §11.5/§12.1/§12.3/§15/§16/§18.1. Отклонений от архитектуры нет; уточнения:
+  новые lib-файлы (п.1), dedup после доставки (п.2), интервал позднего отбоя
+  (п.3), morning-обогащение (п.4), склейка алертов (п.5), midnight-edge (п.7).
+  SPECIFICATION.md текстово не правился — решения зафиксированы здесь.
+- **Состояние проекта:** фаза 4 завершена и авто-верифицирована. Фазы 5–6
+  не начаты.
+- **Коммит:** _не коммичено._
 
 ### 2026-08-15 — фаза 3 — завершена реализация недельного отчёта + графиков + tone в деле
 

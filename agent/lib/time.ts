@@ -21,6 +21,13 @@ export function localDay(date: Date, tz: string): string {
   }).format(date);
 }
 
+/** Предыдущий день "YYYY-MM-DD" (строчная арифметика по UTC-полуночи дня-строки). */
+export function previousDay(day: string): string {
+  return new Date(new Date(`${day}T00:00:00Z`).getTime() - 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Компоненты (number) из строки "YYYY-MM-DD"; бросает при невалидном формате. */
